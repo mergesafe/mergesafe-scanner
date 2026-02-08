@@ -7,6 +7,9 @@ import { runEngines, defaultAdapters, listEngines } from '@mergesafe/engines';
 import { generateHtmlReport, generateSummaryMarkdown } from '@mergesafe/report';
 import { toSarif } from '@mergesafe/sarif';
 
+const DEFAULT_FORMATS = ['json', 'html', 'sarif', 'md'] as const;
+const ALLOWED_FORMATS = new Set(DEFAULT_FORMATS);
+
 type ParsedArgs = { scanPath?: string; opts: Record<string, string | boolean>; command: 'scan' | 'list-engines' };
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -51,26 +54,35 @@ function loadConfig(configPath?: string): Partial<CliConfig> {
   return data ?? {};
 }
 
-function resolveOutDir(dir: string): string {
-  if (path.isAbsolute(dir)) return dir;
-  const repoRoot = path.resolve(process.cwd(), '..', '..');
-  if (fs.existsSync(path.join(repoRoot, 'pnpm-workspace.yaml'))) {
-    return path.resolve(repoRoot, dir);
-  }
-  return path.resolve(process.cwd(), dir);
+export function normalizeOutDir(outDir: string | undefined, cwd = process.cwd(), pathLib: Pick<typeof path, 'isAbsolute' | 'normalize' | 'resolve'> = path): string {
+  const value = outDir?.trim() || 'mergesafe';
+  if (pathLib.isAbsolute(value)) return pathLib.normalize(value);
+  return pathLib.resolve(cwd, value);
+}
+
+export function parseListOpt(value: string | string[] | undefined, defaults: string[]): string[] {
+  const raw = Array.isArray(value) ? value.join(',') : value;
+  const parsed = (raw ?? '')
+    .split(/[\s,]+/)
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+  const deduped = [...new Set(parsed)];
+  return deduped.length ? deduped : defaults;
 }
 
 function resolveConfig(opts: Record<string, string | boolean>): CliConfig {
   const cfg = loadConfig((opts.config as string | undefined));
+  const parsedFormats = parseListOpt((opts.format as string | undefined) ?? (cfg.format as string | string[] | undefined), [...DEFAULT_FORMATS]);
+  const format = parsedFormats.filter((entry) => ALLOWED_FORMATS.has(entry as (typeof DEFAULT_FORMATS)[number]));
   return {
-    outDir: resolveOutDir(((opts['out-dir'] as string) ?? cfg.outDir ?? 'mergesafe') as string),
-    format: ((opts.format as string) ?? (cfg.format as unknown as string) ?? 'json,html,sarif,md').split(',').map((x) => x.trim()),
+    outDir: normalizeOutDir((opts['out-dir'] as string) ?? cfg.outDir),
+    format: format.length ? format : [...DEFAULT_FORMATS],
     mode: ((opts.mode as CliConfig['mode']) ?? cfg.mode ?? 'fast'),
     timeout: Number((opts.timeout as string) ?? cfg.timeout ?? 30),
     concurrency: Number((opts.concurrency as string) ?? cfg.concurrency ?? 4),
     failOn: ((opts['fail-on'] as CliConfig['failOn']) ?? cfg.failOn ?? 'high'),
     redact: Boolean(opts.redact ?? cfg.redact ?? false),
-    engines: ((opts.engines as string) ?? (cfg.engines as unknown as string) ?? 'mergesafe').split(',').map((entry) => entry.trim()).filter(Boolean),
+    engines: parseListOpt((opts.engines as string | undefined) ?? (cfg.engines as string | string[] | undefined), ['mergesafe']),
   };
 }
 
@@ -94,13 +106,18 @@ export async function runScan(scanPath: string, config: CliConfig): Promise<Scan
   };
 }
 
-function writeOutputs(result: ScanResult, config: CliConfig) {
-  fs.mkdirSync(config.outDir, { recursive: true });
-  const wants = new Set(config.format);
-  if (wants.has('json')) fs.writeFileSync(path.join(config.outDir, 'report.json'), JSON.stringify(result, null, 2));
-  if (wants.has('md')) fs.writeFileSync(path.join(config.outDir, 'summary.md'), generateSummaryMarkdown(result));
-  if (wants.has('html')) fs.writeFileSync(path.join(config.outDir, 'report.html'), generateHtmlReport(result));
-  if (wants.has('sarif')) fs.writeFileSync(path.join(config.outDir, 'results.sarif'), JSON.stringify(toSarif(result), null, 2));
+export function writeOutputs(result: ScanResult, config: CliConfig) {
+  const outDirAbs = normalizeOutDir(config.outDir);
+  fs.mkdirSync(outDirAbs, { recursive: true });
+  const wants = new Set(parseListOpt(config.format, [...DEFAULT_FORMATS]).filter((entry) => ALLOWED_FORMATS.has(entry as (typeof DEFAULT_FORMATS)[number])));
+  if (!wants.size) {
+    for (const format of DEFAULT_FORMATS) wants.add(format);
+  }
+  if (wants.has('json')) fs.writeFileSync(path.join(outDirAbs, 'report.json'), JSON.stringify(result, null, 2));
+  if (wants.has('md')) fs.writeFileSync(path.join(outDirAbs, 'summary.md'), generateSummaryMarkdown(result));
+  if (wants.has('html')) fs.writeFileSync(path.join(outDirAbs, 'report.html'), generateHtmlReport(result));
+  if (wants.has('sarif')) fs.writeFileSync(path.join(outDirAbs, 'results.sarif'), JSON.stringify(toSarif(result), null, 2));
+  return outDirAbs;
 }
 
 function resolveScanPath(inputPath: string): string {
@@ -123,7 +140,8 @@ async function main() {
   }
 
   const result = await runScan(resolveScanPath(parsed.scanPath!), config);
-  writeOutputs(result, config);
+  const outputPath = writeOutputs(result, config);
+  console.log(`MergeSafe: wrote outputs to ${outputPath}`);
   console.log(`MergeSafe ${result.summary.status} grade ${result.summary.grade} findings=${result.summary.totalFindings}`);
   process.exitCode = result.summary.status === 'FAIL' ? 2 : 0;
 }
