@@ -1,0 +1,308 @@
+{
+  "version": "2.1.0",
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "MergeSafe",
+          "informationUri": "https://github.com/mergesafe/mergesafe-scanner",
+          "rules": [
+            {
+              "id": "MS001",
+              "name": "Destructive tools exposed without gating hints",
+              "shortDescription": {
+                "text": "Destructive tools exposed without gating hints"
+              }
+            },
+            {
+              "id": "MS002",
+              "name": "Command execution reachable from tool handlers",
+              "shortDescription": {
+                "text": "Command execution reachable from tool handlers"
+              }
+            },
+            {
+              "id": "MS003",
+              "name": "Filesystem write with user-controlled paths",
+              "shortDescription": {
+                "text": "Filesystem write with user-controlled paths"
+              }
+            },
+            {
+              "id": "MS004",
+              "name": "Network egress from tool handlers without allowlist",
+              "shortDescription": {
+                "text": "Network egress from tool handlers without allowlist"
+              }
+            },
+            {
+              "id": "MS005",
+              "name": "Secrets or tokens likely logged or dumped",
+              "shortDescription": {
+                "text": "Secrets or tokens likely logged or dumped"
+              }
+            },
+            {
+              "id": "MS006",
+              "name": "Overly-broad OAuth scope patterns in config",
+              "shortDescription": {
+                "text": "Overly-broad OAuth scope patterns in config"
+              }
+            },
+            {
+              "id": "MS007",
+              "name": "Missing auth middleware smell on HTTP MCP endpoints",
+              "shortDescription": {
+                "text": "Missing auth middleware smell on HTTP MCP endpoints"
+              }
+            },
+            {
+              "id": "MS008",
+              "name": "Unsafe defaults (debug/allow-all)",
+              "shortDescription": {
+                "text": "Unsafe defaults (debug/allow-all)"
+              }
+            },
+            {
+              "id": "MS009",
+              "name": "Tool descriptions claim read-only but code suggests writes/egress",
+              "shortDescription": {
+                "text": "Tool descriptions claim read-only but code suggests writes/egress"
+              }
+            },
+            {
+              "id": "MS010",
+              "name": "Dynamic tool registration from untrusted input",
+              "shortDescription": {
+                "text": "Dynamic tool registration from untrusted input"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "MS001",
+          "level": "error",
+          "message": {
+            "text": "Destructive tools exposed without gating hints - Require explicit authorization/gating hints."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js"
+                },
+                "region": {
+                  "startLine": 8
+                }
+              }
+            }
+          ],
+          "fingerprints": {
+            "primaryLocationLineHash": "646762f9faedcde3"
+          }
+        },
+        {
+          "ruleId": "MS002",
+          "level": "error",
+          "message": {
+            "text": "Command execution reachable from tool handlers - Avoid shell execution; sanitize inputs and isolate commands."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js"
+                },
+                "region": {
+                  "startLine": 14
+                }
+              }
+            }
+          ],
+          "fingerprints": {
+            "primaryLocationLineHash": "4828c02a0a67bc1d"
+          }
+        },
+        {
+          "ruleId": "MS003",
+          "level": "error",
+          "message": {
+            "text": "Filesystem write with user-controlled paths - Use path normalization and allowlisted directories."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js"
+                },
+                "region": {
+                  "startLine": 15
+                }
+              }
+            }
+          ],
+          "fingerprints": {
+            "primaryLocationLineHash": "ff9ad071629faa35"
+          }
+        },
+        {
+          "ruleId": "MS004",
+          "level": "error",
+          "message": {
+            "text": "Network egress from tool handlers without allowlist - Enforce explicit egress allowlist."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js"
+                },
+                "region": {
+                  "startLine": 16
+                }
+              }
+            }
+          ],
+          "fingerprints": {
+            "primaryLocationLineHash": "871467bc30d53666"
+          }
+        },
+        {
+          "ruleId": "MS005",
+          "level": "error",
+          "message": {
+            "text": "Secrets or tokens likely logged or dumped - Redact secrets before logging."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js"
+                },
+                "region": {
+                  "startLine": 13
+                }
+              }
+            }
+          ],
+          "fingerprints": {
+            "primaryLocationLineHash": "58428827ef57175c"
+          }
+        },
+        {
+          "ruleId": "MS006",
+          "level": "warning",
+          "message": {
+            "text": "Overly-broad OAuth scope patterns in config - Use least-privilege OAuth scopes."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js"
+                },
+                "region": {
+                  "startLine": 9
+                }
+              }
+            }
+          ],
+          "fingerprints": {
+            "primaryLocationLineHash": "2a408f85085e731d"
+          }
+        },
+        {
+          "ruleId": "MS007",
+          "level": "error",
+          "message": {
+            "text": "Missing auth middleware smell on HTTP MCP endpoints - Add auth middleware to MCP endpoints."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js"
+                },
+                "region": {
+                  "startLine": 12
+                }
+              }
+            }
+          ],
+          "fingerprints": {
+            "primaryLocationLineHash": "a0fdf3826331e5af"
+          }
+        },
+        {
+          "ruleId": "MS008",
+          "level": "warning",
+          "message": {
+            "text": "Unsafe defaults (debug/allow-all) - Disable debug and tighten allow-lists."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js"
+                },
+                "region": {
+                  "startLine": 10
+                }
+              }
+            }
+          ],
+          "fingerprints": {
+            "primaryLocationLineHash": "0746ea88358f6388"
+          }
+        },
+        {
+          "ruleId": "MS009",
+          "level": "warning",
+          "message": {
+            "text": "Tool descriptions claim read-only but code suggests writes/egress - Align tool metadata with actual capabilities."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js"
+                },
+                "region": {
+                  "startLine": 7
+                }
+              }
+            }
+          ],
+          "fingerprints": {
+            "primaryLocationLineHash": "246f06631b7dca30"
+          }
+        },
+        {
+          "ruleId": "MS010",
+          "level": "error",
+          "message": {
+            "text": "Dynamic tool registration from untrusted input - Disallow dynamic tool registration from untrusted data."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js"
+                },
+                "region": {
+                  "startLine": 20
+                }
+              }
+            }
+          ],
+          "fingerprints": {
+            "primaryLocationLineHash": "aa28f48770fd1e11"
+          }
+        }
+      ]
+    }
+  ]
+}

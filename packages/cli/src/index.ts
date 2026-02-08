@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import YAML from 'yaml';
 import { summarize, type CliConfig, type ScanResult } from '@mergesafe/core';
 import { runEngines, defaultAdapters, listEngines } from '@mergesafe/engines';
@@ -14,6 +15,7 @@ type ParsedArgs = { scanPath?: string; opts: Record<string, string | boolean>; c
 
 function parseArgs(argv: string[]): ParsedArgs {
   const normalized = argv[0] === '--' ? argv.slice(1) : argv;
+
   if (normalized.includes('--list-engines')) {
     const opts: Record<string, string | boolean> = {};
     for (let i = 0; i < normalized.length; i++) {
@@ -32,6 +34,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 
   const [command, scanPath, ...rest] = normalized;
   if (command !== 'scan' || !scanPath) throw new Error('Usage: mergesafe scan <path> [options]');
+
   const opts: Record<string, string | boolean> = {};
   for (let i = 0; i < rest.length; i++) {
     const token = rest[i];
@@ -44,6 +47,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     opts[key] = rest[i + 1];
     i++;
   }
+
   return { command: 'scan', scanPath, opts };
 }
 
@@ -54,7 +58,11 @@ function loadConfig(configPath?: string): Partial<CliConfig> {
   return data ?? {};
 }
 
-export function normalizeOutDir(outDir: string | undefined, cwd = process.cwd(), pathLib: Pick<typeof path, 'isAbsolute' | 'normalize' | 'resolve'> = path): string {
+export function normalizeOutDir(
+  outDir: string | undefined,
+  cwd = process.cwd(),
+  pathLib: Pick<typeof path, 'isAbsolute' | 'normalize' | 'resolve'> = path
+): string {
   const value = outDir?.trim() || 'mergesafe';
   if (pathLib.isAbsolute(value)) return pathLib.normalize(value);
   return pathLib.resolve(cwd, value);
@@ -71,9 +79,13 @@ export function parseListOpt(value: string | string[] | undefined, defaults: str
 }
 
 function resolveConfig(opts: Record<string, string | boolean>): CliConfig {
-  const cfg = loadConfig((opts.config as string | undefined));
-  const parsedFormats = parseListOpt((opts.format as string | undefined) ?? (cfg.format as string | string[] | undefined), [...DEFAULT_FORMATS]);
+  const cfg = loadConfig(opts.config as string | undefined);
+  const parsedFormats = parseListOpt(
+    (opts.format as string | undefined) ?? (cfg.format as string | string[] | undefined),
+    [...DEFAULT_FORMATS]
+  );
   const format = parsedFormats.filter((entry) => ALLOWED_FORMATS.has(entry as (typeof DEFAULT_FORMATS)[number]));
+
   return {
     outDir: normalizeOutDir((opts['out-dir'] as string) ?? cfg.outDir),
     format: format.length ? format : [...DEFAULT_FORMATS],
@@ -82,7 +94,10 @@ function resolveConfig(opts: Record<string, string | boolean>): CliConfig {
     concurrency: Number((opts.concurrency as string) ?? cfg.concurrency ?? 4),
     failOn: ((opts['fail-on'] as CliConfig['failOn']) ?? cfg.failOn ?? 'high'),
     redact: Boolean(opts.redact ?? cfg.redact ?? false),
-    engines: parseListOpt((opts.engines as string | undefined) ?? (cfg.engines as string | string[] | undefined), ['mergesafe']),
+    engines: parseListOpt(
+      (opts.engines as string | undefined) ?? (cfg.engines as string | string[] | undefined),
+      ['mergesafe']
+    ),
   };
 }
 
@@ -90,6 +105,7 @@ export async function runScan(scanPath: string, config: CliConfig): Promise<Scan
   const selected = config.engines ?? ['mergesafe'];
   const { findings, meta } = await runEngines({ scanPath, config }, selected, defaultAdapters);
   const summary = summarize(findings, config.failOn);
+
   return {
     meta: {
       scannedPath: scanPath,
@@ -102,35 +118,50 @@ export async function runScan(scanPath: string, config: CliConfig): Promise<Scan
     },
     summary,
     findings,
-    byEngine: Object.fromEntries(meta.map((entry) => [entry.engineId, findings.filter((finding) => finding.engineSources.some((source) => source.engineId === entry.engineId)).length])),
+    byEngine: Object.fromEntries(
+      meta.map((entry) => [
+        entry.engineId,
+        findings.filter((finding) => finding.engineSources.some((source) => source.engineId === entry.engineId)).length,
+      ])
+    ),
   };
 }
 
 export function writeOutputs(result: ScanResult, config: CliConfig) {
   const outDirAbs = normalizeOutDir(config.outDir);
   fs.mkdirSync(outDirAbs, { recursive: true });
-  const wants = new Set(parseListOpt(config.format, [...DEFAULT_FORMATS]).filter((entry) => ALLOWED_FORMATS.has(entry as (typeof DEFAULT_FORMATS)[number])));
+
+  const wants = new Set(
+    parseListOpt(config.format, [...DEFAULT_FORMATS]).filter((entry) =>
+      ALLOWED_FORMATS.has(entry as (typeof DEFAULT_FORMATS)[number])
+    )
+  );
   if (!wants.size) {
     for (const format of DEFAULT_FORMATS) wants.add(format);
   }
+
   if (wants.has('json')) fs.writeFileSync(path.join(outDirAbs, 'report.json'), JSON.stringify(result, null, 2));
   if (wants.has('md')) fs.writeFileSync(path.join(outDirAbs, 'summary.md'), generateSummaryMarkdown(result));
   if (wants.has('html')) fs.writeFileSync(path.join(outDirAbs, 'report.html'), generateHtmlReport(result));
   if (wants.has('sarif')) fs.writeFileSync(path.join(outDirAbs, 'results.sarif'), JSON.stringify(toSarif(result), null, 2));
+
   return outDirAbs;
 }
 
 function resolveScanPath(inputPath: string): string {
   const abs = path.resolve(process.cwd(), inputPath);
   if (fs.existsSync(abs)) return abs;
+
   const repoRelative = path.resolve(process.cwd(), '..', '..', inputPath);
   if (fs.existsSync(repoRelative)) return repoRelative;
+
   return abs;
 }
 
 async function main() {
   const parsed = parseArgs(process.argv.slice(2));
   const config = resolveConfig(parsed.opts);
+
   if (parsed.command === 'list-engines') {
     const entries = await listEngines({ scanPath: process.cwd(), config }, defaultAdapters);
     for (const entry of entries) {
@@ -141,14 +172,30 @@ async function main() {
 
   const result = await runScan(resolveScanPath(parsed.scanPath!), config);
   const outputPath = writeOutputs(result, config);
+
   console.log(`MergeSafe: wrote outputs to ${outputPath}`);
   console.log(`MergeSafe ${result.summary.status} grade ${result.summary.grade} findings=${result.summary.totalFindings}`);
   process.exitCode = result.summary.status === 'FAIL' ? 2 : 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+/**
+ * IMPORTANT:
+ * The old check `import.meta.url === \`file://${process.argv[1]}\`` breaks on Windows.
+ * This uses pathToFileURL so it works on Windows/macOS/Linux.
+ */
+const isDirectRun = (() => {
+  const arg1 = process.argv[1];
+  if (!arg1) return false;
+  try {
+    return import.meta.url === pathToFileURL(arg1).href;
+  } catch {
+    return false;
+  }
+})();
+
+if (isDirectRun) {
   main().catch((err) => {
-    console.error((err as Error).message);
+    console.error((err as Error).stack || (err as Error).message);
     process.exit(1);
   });
 }

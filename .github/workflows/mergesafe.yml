@@ -1,40 +1,73 @@
 name: MergeSafe
+
 on:
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
-  # In your own repository, you can enable automatic PR scans:
-  # pull_request:
-  #   branches: [ main ]
+
 permissions:
   contents: read
   security-events: write
   pull-requests: write
 
 env:
-  UPLOAD_SARIF: 'true'
-  COMMENT_PR: 'true'
+  UPLOAD_SARIF: "true"
+  COMMENT_PR: "true"
 
 jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run MergeSafe
+
+      # (Optional but recommended) ensure predictable node/pnpm on runner
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      # Best-effort: if these installs fail for any reason, MergeSafe will still run mergesafe engine.
+      - name: Install Semgrep (best-effort)
+        continue-on-error: true
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install semgrep
+          semgrep --version || true
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install Gitleaks (best-effort)
+        continue-on-error: true
+        run: |
+          go install github.com/gitleaks/gitleaks/v8@latest
+          echo "$HOME/go/bin" >> $GITHUB_PATH
+          gitleaks version || true
+
+      - name: Run MergeSafe (multi-engine)
         uses: mergesafe/mergesafe-scanner/packages/action@main
         with:
           path: .
           mode: fast
           fail_on: high
-          engines: mergesafe
+          engines: "mergesafe,semgrep,gitleaks"
           out_dir: mergesafe
-          upload_sarif: ${{ env.UPLOAD_SARIF }}
-          comment_pr: ${{ env.COMMENT_PR }}
+          # Let the workflow handle upload/comment below (avoid double behavior)
+          upload_sarif: "false"
+          comment_pr: "false"
+
       - name: Upload SARIF
-        if: ${{ env.UPLOAD_SARIF == 'true' }}
+        if: ${{ always() && env.UPLOAD_SARIF == 'true' }}
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: mergesafe/results.sarif
+
       - name: Comment PR summary
-        if: ${{ github.event_name == 'pull_request' && env.COMMENT_PR == 'true' }}
+        if: ${{ always() && github.event_name == 'pull_request' && env.COMMENT_PR == 'true' }}
         uses: actions/github-script@v7
         with:
           script: |

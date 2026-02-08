@@ -1,0 +1,356 @@
+{
+  "meta": {
+    "scannedPath": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server",
+    "generatedAt": "2026-02-08T22:35:41.654Z",
+    "mode": "fast",
+    "timeout": 30,
+    "concurrency": 4,
+    "redacted": false,
+    "engines": [
+      {
+        "engineId": "mergesafe",
+        "version": "builtin",
+        "status": "ok",
+        "durationMs": 3
+      }
+    ]
+  },
+  "summary": {
+    "totalFindings": 10,
+    "bySeverity": {
+      "critical": 2,
+      "high": 5,
+      "medium": 3,
+      "low": 0,
+      "info": 0
+    },
+    "score": 0,
+    "grade": "F",
+    "status": "PASS"
+  },
+  "findings": [
+    {
+      "findingId": "mergesafe-MS001-646762f9faedcde3",
+      "title": "Destructive tools exposed without gating hints",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "tooling",
+      "owaspMcpTop10": "MCP-A10",
+      "engineSources": [
+        {
+          "engineId": "mergesafe",
+          "engineRuleId": "MS001",
+          "engineSeverity": "high",
+          "message": "Destructive tools exposed without gating hints"
+        }
+      ],
+      "locations": [
+        {
+          "filePath": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js",
+          "line": 8
+        }
+      ],
+      "evidence": {
+        "excerpt": "destructive pattern",
+        "note": "Engine finding evidence"
+      },
+      "remediation": "Require explicit authorization/gating hints.",
+      "references": [],
+      "tags": [
+        "mergesafe"
+      ],
+      "fingerprint": "646762f9faedcde3"
+    },
+    {
+      "findingId": "mergesafe-MS002-4828c02a0a67bc1d",
+      "title": "Command execution reachable from tool handlers",
+      "severity": "critical",
+      "confidence": "medium",
+      "category": "injection",
+      "owaspMcpTop10": "MCP-A10",
+      "engineSources": [
+        {
+          "engineId": "mergesafe",
+          "engineRuleId": "MS002",
+          "engineSeverity": "critical",
+          "message": "Command execution reachable from tool handlers"
+        }
+      ],
+      "locations": [
+        {
+          "filePath": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js",
+          "line": 14
+        }
+      ],
+      "evidence": {
+        "excerpt": "Potential command execution in handler",
+        "note": "Engine finding evidence"
+      },
+      "remediation": "Avoid shell execution; sanitize inputs and isolate commands.",
+      "references": [],
+      "tags": [
+        "mergesafe"
+      ],
+      "fingerprint": "4828c02a0a67bc1d"
+    },
+    {
+      "findingId": "mergesafe-MS003-ff9ad071629faa35",
+      "title": "Filesystem write with user-controlled paths",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "filesystem",
+      "owaspMcpTop10": "MCP-A10",
+      "engineSources": [
+        {
+          "engineId": "mergesafe",
+          "engineRuleId": "MS003",
+          "engineSeverity": "high",
+          "message": "Filesystem write with user-controlled paths"
+        }
+      ],
+      "locations": [
+        {
+          "filePath": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js",
+          "line": 15
+        }
+      ],
+      "evidence": {
+        "excerpt": "User-controlled file write path detected",
+        "note": "Engine finding evidence"
+      },
+      "remediation": "Use path normalization and allowlisted directories.",
+      "references": [],
+      "tags": [
+        "mergesafe"
+      ],
+      "fingerprint": "ff9ad071629faa35"
+    },
+    {
+      "findingId": "mergesafe-MS004-871467bc30d53666",
+      "title": "Network egress from tool handlers without allowlist",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "network",
+      "owaspMcpTop10": "MCP-A10",
+      "engineSources": [
+        {
+          "engineId": "mergesafe",
+          "engineRuleId": "MS004",
+          "engineSeverity": "high",
+          "message": "Network egress from tool handlers without allowlist"
+        }
+      ],
+      "locations": [
+        {
+          "filePath": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js",
+          "line": 16
+        }
+      ],
+      "evidence": {
+        "excerpt": "Outgoing network call in handler without allowlist",
+        "note": "Engine finding evidence"
+      },
+      "remediation": "Enforce explicit egress allowlist.",
+      "references": [],
+      "tags": [
+        "mergesafe"
+      ],
+      "fingerprint": "871467bc30d53666"
+    },
+    {
+      "findingId": "mergesafe-MS005-58428827ef57175c",
+      "title": "Secrets or tokens likely logged or dumped",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "secrets",
+      "owaspMcpTop10": "MCP-A10",
+      "engineSources": [
+        {
+          "engineId": "mergesafe",
+          "engineRuleId": "MS005",
+          "engineSeverity": "high",
+          "message": "Secrets or tokens likely logged or dumped"
+        }
+      ],
+      "locations": [
+        {
+          "filePath": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js",
+          "line": 13
+        }
+      ],
+      "evidence": {
+        "excerpt": "Sensitive value appears in logs",
+        "note": "Engine finding evidence"
+      },
+      "remediation": "Redact secrets before logging.",
+      "references": [],
+      "tags": [
+        "mergesafe"
+      ],
+      "fingerprint": "58428827ef57175c"
+    },
+    {
+      "findingId": "mergesafe-MS006-2a408f85085e731d",
+      "title": "Overly-broad OAuth scope patterns in config",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "authz",
+      "owaspMcpTop10": "MCP-A10",
+      "engineSources": [
+        {
+          "engineId": "mergesafe",
+          "engineRuleId": "MS006",
+          "engineSeverity": "medium",
+          "message": "Overly-broad OAuth scope patterns in config"
+        }
+      ],
+      "locations": [
+        {
+          "filePath": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js",
+          "line": 9
+        }
+      ],
+      "evidence": {
+        "excerpt": "Broad OAuth scope detected",
+        "note": "Engine finding evidence"
+      },
+      "remediation": "Use least-privilege OAuth scopes.",
+      "references": [],
+      "tags": [
+        "mergesafe"
+      ],
+      "fingerprint": "2a408f85085e731d"
+    },
+    {
+      "findingId": "mergesafe-MS007-a0fdf3826331e5af",
+      "title": "Missing auth middleware smell on HTTP MCP endpoints",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "authn",
+      "owaspMcpTop10": "MCP-A10",
+      "engineSources": [
+        {
+          "engineId": "mergesafe",
+          "engineRuleId": "MS007",
+          "engineSeverity": "high",
+          "message": "Missing auth middleware smell on HTTP MCP endpoints"
+        }
+      ],
+      "locations": [
+        {
+          "filePath": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js",
+          "line": 12
+        }
+      ],
+      "evidence": {
+        "excerpt": "Endpoint appears unauthenticated",
+        "note": "Engine finding evidence"
+      },
+      "remediation": "Add auth middleware to MCP endpoints.",
+      "references": [],
+      "tags": [
+        "mergesafe"
+      ],
+      "fingerprint": "a0fdf3826331e5af"
+    },
+    {
+      "findingId": "mergesafe-MS008-0746ea88358f6388",
+      "title": "Unsafe defaults (debug/allow-all)",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "hardening",
+      "owaspMcpTop10": "MCP-A10",
+      "engineSources": [
+        {
+          "engineId": "mergesafe",
+          "engineRuleId": "MS008",
+          "engineSeverity": "medium",
+          "message": "Unsafe defaults (debug/allow-all)"
+        }
+      ],
+      "locations": [
+        {
+          "filePath": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js",
+          "line": 10
+        }
+      ],
+      "evidence": {
+        "excerpt": "Unsafe permissive defaults found",
+        "note": "Engine finding evidence"
+      },
+      "remediation": "Disable debug and tighten allow-lists.",
+      "references": [],
+      "tags": [
+        "mergesafe"
+      ],
+      "fingerprint": "0746ea88358f6388"
+    },
+    {
+      "findingId": "mergesafe-MS009-246f06631b7dca30",
+      "title": "Tool descriptions claim read-only but code suggests writes/egress",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "integrity",
+      "owaspMcpTop10": "MCP-A10",
+      "engineSources": [
+        {
+          "engineId": "mergesafe",
+          "engineRuleId": "MS009",
+          "engineSeverity": "medium",
+          "message": "Tool descriptions claim read-only but code suggests writes/egress"
+        }
+      ],
+      "locations": [
+        {
+          "filePath": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js",
+          "line": 7
+        }
+      ],
+      "evidence": {
+        "excerpt": "Read-only claim conflicts with mutating capabilities",
+        "note": "Engine finding evidence"
+      },
+      "remediation": "Align tool metadata with actual capabilities.",
+      "references": [],
+      "tags": [
+        "mergesafe"
+      ],
+      "fingerprint": "246f06631b7dca30"
+    },
+    {
+      "findingId": "mergesafe-MS010-aa28f48770fd1e11",
+      "title": "Dynamic tool registration from untrusted input",
+      "severity": "critical",
+      "confidence": "medium",
+      "category": "integrity",
+      "owaspMcpTop10": "MCP-A10",
+      "engineSources": [
+        {
+          "engineId": "mergesafe",
+          "engineRuleId": "MS010",
+          "engineSeverity": "critical",
+          "message": "Dynamic tool registration from untrusted input"
+        }
+      ],
+      "locations": [
+        {
+          "filePath": "C:\\MergeSafe\\mergesafe-scanner\\fixtures\\node-unsafe-server\\server.js",
+          "line": 20
+        }
+      ],
+      "evidence": {
+        "excerpt": "Dynamic tool registration from user input detected",
+        "note": "Engine finding evidence"
+      },
+      "remediation": "Disallow dynamic tool registration from untrusted data.",
+      "references": [],
+      "tags": [
+        "mergesafe"
+      ],
+      "fingerprint": "aa28f48770fd1e11"
+    }
+  ],
+  "byEngine": {
+    "mergesafe": 10
+  }
+}
