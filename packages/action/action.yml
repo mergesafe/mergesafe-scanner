@@ -1,8 +1,8 @@
 name: 'MergeSafe Scanner'
-description: 'Run MergeSafe scanner and optional engines'
+description: 'Run MergeSafe scanner and optional engines (Semgrep, Gitleaks)'
 inputs:
   path:
-    description: 'Path to scan'
+    description: 'Path to scan (relative to repo root)'
     required: false
     default: '.'
   mode:
@@ -14,50 +14,115 @@ inputs:
     required: false
     default: 'high'
   engines:
-    description: 'Comma-separated engines list'
+    description: 'Comma-separated engines list (e.g. mergesafe,semgrep,gitleaks)'
     required: false
     default: 'mergesafe'
   out_dir:
-    description: 'Output directory'
+    description: 'Output directory (relative to repo root)'
     required: false
     default: 'mergesafe'
   upload_sarif:
-    description: 'Whether caller uploads SARIF'
+    description: 'Upload SARIF to GitHub Code Scanning'
     required: false
     default: 'true'
   comment_pr:
-    description: 'Whether caller comments on PR'
+    description: 'Comment PR summary'
     required: false
     default: 'true'
   config:
-    description: 'Optional config file path'
+    description: 'Optional config file path (relative to repo root)'
     required: false
     default: ''
+
 runs:
   using: 'composite'
   steps:
     - uses: actions/setup-node@v4
       with:
         node-version: '20'
-    - name: Enable corepack
+
+    - name: Enable pnpm (corepack)
       shell: bash
-      run: corepack enable
-    - name: Install dependencies
+      run: |
+        corepack enable
+        corepack prepare pnpm@10.0.0 --activate
+        pnpm -v
+
+    # Install semgrep only if requested
+    - uses: actions/setup-python@v5
+      if: ${{ contains(inputs.engines, 'semgrep') }}
+      with:
+        python-version: '3.x'
+
+    - name: Install Semgrep (best-effort)
+      if: ${{ contains(inputs.engines, 'semgrep') }}
+      continue-on-error: true
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install semgrep
+        semgrep --version || true
+
+    # Install gitleaks only if requested
+    - uses: actions/setup-go@v5
+      if: ${{ contains(inputs.engines, 'gitleaks') }}
+      with:
+        go-version: '1.22'
+
+    - name: Install Gitleaks (best-effort)
+      if: ${{ contains(inputs.engines, 'gitleaks') }}
+      continue-on-error: true
+      shell: bash
+      run: |
+        go install github.com/gitleaks/gitleaks/v8@latest
+        echo "$HOME/go/bin" >> $GITHUB_PATH
+        gitleaks version || true
+
+    # Install MergeSafe action-repo deps (so we can run the CLI from source)
+    - name: Install MergeSafe dependencies
       shell: bash
       working-directory: ${{ github.action_path }}/../..
       run: pnpm install --frozen-lockfile
-    - name: Run MergeSafe scan
+
+    - name: Run MergeSafe scan (scans USER repo)
       shell: bash
       working-directory: ${{ github.action_path }}/../..
       run: |
+        SCAN_PATH="${GITHUB_WORKSPACE}/${{ inputs.path }}"
+        OUT_DIR="${GITHUB_WORKSPACE}/${{ inputs.out_dir }}"
         CONFIG_ARG=""
         if [ -n "${{ inputs.config }}" ]; then
-          CONFIG_ARG="--config ${{ inputs.config }}"
+          CONFIG_ARG="--config ${GITHUB_WORKSPACE}/${{ inputs.config }}"
         fi
-        pnpm -C packages/cli dev -- scan "${{ inputs.path }}" \
+
+        echo "MERGESAFE_OUT_DIR=$OUT_DIR" >> $GITHUB_ENV
+
+        pnpm -C packages/cli dev -- scan "$SCAN_PATH" \
           --mode "${{ inputs.mode }}" \
           --fail-on "${{ inputs.fail_on }}" \
           --engines "${{ inputs.engines }}" \
-          --out-dir "${{ inputs.out_dir }}" \
-          --format "json,sarif,md,html" \
-          ${CONFIG_ARG}
+          --out-dir "$OUT_DIR" \
+          --format "json,html,sarif,md" \
+          $CONFIG_ARG
+
+    - name: Upload SARIF
+      if: ${{ inputs.upload_sarif == 'true' }}
+      uses: github/codeql-action/upload-sarif@v4
+      with:
+        sarif_file: ${{ env.MERGESAFE_OUT_DIR }}/results.sarif
+
+    - name: Comment PR summary
+      if: ${{ inputs.comment_pr == 'true' && github.event_name == 'pull_request' }}
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          const outDir = process.env.MERGESAFE_OUT_DIR;
+          const body = fs.readFileSync(path.join(outDir, 'summary.md'), 'utf8');
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body,
+          });
