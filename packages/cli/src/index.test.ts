@@ -10,9 +10,9 @@ const fixture = path.resolve(here, '../../../fixtures/node-unsafe-server');
 const outDir = path.resolve(here, '../../../mergesafe-test-golden');
 
 describe('golden scan', () => {
-  test('creates report structures and formats', () => {
+  test('creates report structures and formats', async () => {
     fs.rmSync(outDir, { recursive: true, force: true });
-    const result = runScan(fixture, {
+    const result = await runScan(fixture, {
       outDir,
       format: ['json', 'sarif', 'md', 'html'],
       mode: 'fast',
@@ -41,8 +41,8 @@ describe('golden scan', () => {
     expect(md).toContain('Top Findings');
   });
 
-  test('fail-on high returns fail status', () => {
-    const result = runScan(fixture, {
+  test('fail-on high returns fail status', async () => {
+    const result = await runScan(fixture, {
       outDir,
       format: ['json'],
       mode: 'fast',

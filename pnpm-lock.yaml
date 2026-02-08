@@ -26,6 +26,9 @@ importers:
       '@mergesafe/core':
         specifier: workspace:*
         version: link:../core
+      '@mergesafe/engines':
+        specifier: workspace:*
+        version: link:../engines
       '@mergesafe/report':
         specifier: workspace:*
         version: link:../report
@@ -44,6 +47,19 @@ importers:
         version: 8.5.1(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
 
   packages/core:
+    devDependencies:
+      tsup:
+        specifier: ^8.3.5
+        version: 8.5.1(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
+
+  packages/engines:
+    dependencies:
+      '@mergesafe/core':
+        specifier: workspace:*
+        version: link:../core
+      '@mergesafe/rules':
+        specifier: workspace:*
+        version: link:../rules
     devDependencies:
       tsup:
         specifier: ^8.3.5

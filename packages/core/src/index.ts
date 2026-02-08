@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 
-export type Severity = 'critical' | 'high' | 'medium' | 'low';
+export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 export type Confidence = 'high' | 'medium' | 'low';
 
 export interface FindingLocation {
@@ -17,7 +17,9 @@ export interface FindingEvidence {
 
 export interface EngineSource {
   engineId: string;
-  ruleId: string;
+  engineRuleId?: string;
+  engineSeverity?: string;
+  message?: string;
 }
 
 export interface Finding {
@@ -44,6 +46,15 @@ export interface ScanSummary {
   status: 'PASS'|'FAIL';
 }
 
+export interface EngineExecutionMeta {
+  engineId: string;
+  version: string;
+  status: 'ok' | 'skipped' | 'failed' | 'timeout';
+  durationMs: number;
+  errorMessage?: string;
+  installHint?: string;
+}
+
 export interface ScanMeta {
   scannedPath: string;
   generatedAt: string;
@@ -51,6 +62,7 @@ export interface ScanMeta {
   timeout: number;
   concurrency: number;
   redacted: boolean;
+  engines?: EngineExecutionMeta[];
 }
 
 export interface ScanResult {
@@ -68,12 +80,13 @@ export interface CliConfig {
   concurrency: number;
   failOn: 'critical'|'high'|'none';
   redact: boolean;
+  engines?: string[];
 }
 
 export interface RawFinding {
   ruleId: string;
   title: string;
-  severity: Severity;
+  severity: Exclude<Severity, 'info'>;
   confidence: Confidence;
   category: string;
   owaspMcpTop10: string;
@@ -93,9 +106,13 @@ export function lineBucket(line: number): number {
   return Math.floor(Math.max(line, 1) / 5) * 5;
 }
 
+export function findingFingerprint(filePath: string, line: number, evidence: string): string {
+  return stableHash(`${filePath}:${lineBucket(line)}:${stableHash(evidence)}`);
+}
+
 export function toFinding(raw: RawFinding, redact: boolean): Finding {
   const snippetHash = stableHash(raw.evidence);
-  const fingerprint = stableHash(`${raw.ruleId}:${raw.filePath}:${lineBucket(raw.line)}:${snippetHash}`);
+  const fingerprint = findingFingerprint(raw.filePath, raw.line, raw.evidence);
   return {
     findingId: `${raw.ruleId}-${fingerprint}`,
     title: raw.title,
@@ -103,7 +120,7 @@ export function toFinding(raw: RawFinding, redact: boolean): Finding {
     confidence: raw.confidence,
     category: raw.category,
     owaspMcpTop10: raw.owaspMcpTop10,
-    engineSources: [{ engineId: 'mergesafe', ruleId: raw.ruleId }],
+    engineSources: [{ engineId: 'mergesafe', engineRuleId: raw.ruleId, engineSeverity: raw.severity, message: raw.title }],
     locations: [{ filePath: raw.filePath, line: raw.line }],
     evidence: redact ? { excerptHash: snippetHash, note: 'Redacted evidence' } : { excerpt: raw.evidence, note: 'Static pattern match' },
     remediation: raw.remediation,
@@ -128,8 +145,36 @@ export function dedupeFindings(rawFindings: RawFinding[], redact: boolean): Find
   return [...map.values()];
 }
 
+export function mergeCanonicalFindings(findings: Finding[]): Finding[] {
+  const map = new Map<string, Finding>();
+  for (const finding of findings) {
+    const existing = map.get(finding.fingerprint);
+    if (!existing) {
+      map.set(finding.fingerprint, {
+        ...finding,
+        locations: [...finding.locations],
+        engineSources: [...finding.engineSources],
+        references: [...finding.references],
+        tags: [...finding.tags],
+      });
+      continue;
+    }
+    existing.locations.push(...finding.locations);
+    existing.engineSources.push(...finding.engineSources);
+    existing.references = [...new Set([...existing.references, ...finding.references])];
+    existing.tags = [...new Set([...existing.tags, ...finding.tags])];
+  }
+  return [...map.values()].map((finding) => ({
+    ...finding,
+    engineSources: finding.engineSources.filter((source, index, arr) => {
+      const key = `${source.engineId}:${source.engineRuleId ?? ''}:${source.message ?? ''}`;
+      return arr.findIndex((candidate) => `${candidate.engineId}:${candidate.engineRuleId ?? ''}:${candidate.message ?? ''}` === key) === index;
+    }),
+  }));
+}
+
 export function summarize(findings: Finding[], failOn: CliConfig['failOn']): ScanSummary {
-  const bySeverity: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+  const bySeverity: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   for (const finding of findings) bySeverity[finding.severity] += 1;
   let score = 100 - bySeverity.critical * 30 - bySeverity.high * 15 - bySeverity.medium * 7 - bySeverity.low * 2;
   score = Math.max(0, score);

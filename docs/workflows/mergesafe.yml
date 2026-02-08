@@ -1,0 +1,48 @@
+name: MergeSafe
+on:
+  workflow_dispatch:
+  # In your own repository, you can enable automatic PR scans:
+  # pull_request:
+  #   branches: [ main ]
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
+env:
+  UPLOAD_SARIF: 'true'
+  COMMENT_PR: 'true'
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run MergeSafe
+        uses: mergesafe/mergesafe-scanner/packages/action@main
+        with:
+          path: .
+          mode: fast
+          fail_on: high
+          engines: mergesafe
+          out_dir: mergesafe
+          upload_sarif: ${{ env.UPLOAD_SARIF }}
+          comment_pr: ${{ env.COMMENT_PR }}
+      - name: Upload SARIF
+        if: ${{ env.UPLOAD_SARIF == 'true' }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: mergesafe/results.sarif
+      - name: Comment PR summary
+        if: ${{ github.event_name == 'pull_request' && env.COMMENT_PR == 'true' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('mergesafe/summary.md', 'utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
