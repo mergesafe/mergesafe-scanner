@@ -1,0 +1,24 @@
+{
+  "name": "mergesafe",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "mergesafe": "dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsup src/index.ts --format esm --dts",
+    "test": "vitest run --passWithNoTests",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@mergesafe/core": "workspace:*",
+    "@mergesafe/report": "workspace:*",
+    "@mergesafe/rules": "workspace:*",
+    "@mergesafe/sarif": "workspace:*",
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5"
+  }
+}
