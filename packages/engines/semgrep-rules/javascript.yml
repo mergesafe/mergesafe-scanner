@@ -1,0 +1,11 @@
+rules:
+  - id: mergesafe-eval-usage
+    patterns:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: new Function(...)
+    message: Dynamic code execution sink found.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      category: security

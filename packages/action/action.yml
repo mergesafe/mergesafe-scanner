@@ -1,0 +1,63 @@
+name: 'MergeSafe Scanner'
+description: 'Run MergeSafe scanner and optional engines'
+inputs:
+  path:
+    description: 'Path to scan'
+    required: false
+    default: '.'
+  mode:
+    description: 'Scan mode'
+    required: false
+    default: 'fast'
+  fail_on:
+    description: 'Fail threshold'
+    required: false
+    default: 'high'
+  engines:
+    description: 'Comma-separated engines list'
+    required: false
+    default: 'mergesafe'
+  out_dir:
+    description: 'Output directory'
+    required: false
+    default: 'mergesafe'
+  upload_sarif:
+    description: 'Whether caller uploads SARIF'
+    required: false
+    default: 'true'
+  comment_pr:
+    description: 'Whether caller comments on PR'
+    required: false
+    default: 'true'
+  config:
+    description: 'Optional config file path'
+    required: false
+    default: ''
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    - name: Enable corepack
+      shell: bash
+      run: corepack enable
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ github.action_path }}/../..
+      run: pnpm install --frozen-lockfile
+    - name: Run MergeSafe scan
+      shell: bash
+      working-directory: ${{ github.action_path }}/../..
+      run: |
+        CONFIG_ARG=""
+        if [ -n "${{ inputs.config }}" ]; then
+          CONFIG_ARG="--config ${{ inputs.config }}"
+        fi
+        pnpm -C packages/cli dev -- scan "${{ inputs.path }}" \
+          --mode "${{ inputs.mode }}" \
+          --fail-on "${{ inputs.fail_on }}" \
+          --engines "${{ inputs.engines }}" \
+          --out-dir "${{ inputs.out_dir }}" \
+          --format "json,sarif,md,html" \
+          ${CONFIG_ARG}
