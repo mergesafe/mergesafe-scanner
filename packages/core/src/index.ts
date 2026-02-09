@@ -48,11 +48,16 @@ export interface ScanSummary {
 
 export interface EngineExecutionMeta {
   engineId: string;
+  displayName: string;
   version: string;
   status: 'ok' | 'skipped' | 'failed' | 'timeout';
   durationMs: number;
   errorMessage?: string;
   installHint?: string;
+  artifacts?: {
+    json?: string;
+    sarif?: string;
+  };
 }
 
 export interface ScanMeta {

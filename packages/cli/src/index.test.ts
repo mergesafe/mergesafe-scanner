@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 import { runScan, writeOutputs, normalizeOutDir, parseListOpt, resolveConfig } from './index.js';
+import type { EngineAdapter } from '@mergesafe/engines';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = path.resolve(here, '../../../fixtures/node-unsafe-server');
@@ -69,7 +70,7 @@ describe('option parsing utilities', () => {
 
   test('resolveConfig defaults engines to multi-engine and auto-install on', () => {
     const config = resolveConfig({});
-    expect(config.engines).toEqual(['mergesafe', 'semgrep', 'gitleaks']);
+    expect(config.engines).toEqual(['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv']);
     expect(config.autoInstall).toBe(true);
   });
 
@@ -95,5 +96,47 @@ describe('option parsing utilities', () => {
 
     expect(absOutDir).toBe('C:\\MergeSafe\\mergesafe-test');
     expect(absOutDir.includes('C:\\C:\\')).toBe(false);
+  });
+});
+
+
+describe('resilience', () => {
+  test('scan completes and writes outputs when an engine fails', async () => {
+    const failingAdapter: EngineAdapter = {
+      engineId: 'boom',
+      displayName: 'Boom engine',
+      installHint: 'none',
+      async version() { return '1.0'; },
+      async isAvailable() { return true; },
+      async run() { throw new Error('simulated failure'); },
+    };
+
+    const result = await runScan(fixture, {
+      outDir,
+      format: ['json', 'sarif', 'md', 'html'],
+      mode: 'fast',
+      timeout: 30,
+      concurrency: 1,
+      failOn: 'none',
+      redact: false,
+      autoInstall: false,
+      engines: ['boom'],
+    }, [failingAdapter]);
+
+    const outputPath = writeOutputs(result, {
+      outDir,
+      format: ['json', 'sarif', 'md', 'html'],
+      mode: 'fast',
+      timeout: 30,
+      concurrency: 1,
+      failOn: 'none',
+      redact: false,
+      autoInstall: false,
+      engines: ['boom'],
+    });
+
+    expect(outputPath).toBe(normalizeOutDir(outDir));
+    expect(fs.existsSync(path.join(outDir, 'report.json'))).toBe(true);
+    expect(result.meta.engines?.find((entry) => entry.engineId === 'boom')?.status).toBe('failed');
   });
 });

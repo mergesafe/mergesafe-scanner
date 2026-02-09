@@ -97,3 +97,12 @@ describe('binary detection', () => {
     platformSpy.mockRestore();
   });
 });
+
+
+describe('external engines smoke (gated)', () => {
+  const maybeTest = process.env.RUN_EXTERNAL_ENGINES === '1' ? test : test.skip;
+  maybeTest('runs default engines list invocation', async () => {
+    const { defaultAdapters } = await import('./index.js');
+    expect(defaultAdapters.map((adapter) => adapter.engineId)).toContain('osv');
+  });
+});
