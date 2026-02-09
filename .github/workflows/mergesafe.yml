@@ -20,9 +20,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The composite action already sets up Node + pnpm (corepack) and installs deps.
+      # Use the action FROM THIS REPO/BRANCH (so PR changes are tested)
       - name: Run MergeSafe (multi-engine)
-        uses: mergesafe/mergesafe-scanner/packages/action@main
+        id: mergesafe
+        uses: ./packages/action
         with:
           path: .
           mode: fast
@@ -37,27 +38,29 @@ jobs:
         id: ms_out
         shell: bash
         run: |
-          echo "MERGESAFE_OUT_DIR=${MERGESAFE_OUT_DIR}"
-          if [ -f "${MERGESAFE_OUT_DIR}/results.sarif" ]; then
+          OUT_DIR="${MERGESAFE_OUT_DIR:-mergesafe}"
+          echo "MERGESAFE_OUT_DIR=$OUT_DIR"
+
+          if [ -f "$OUT_DIR/results.sarif" ]; then
             echo "has_sarif=true" >> $GITHUB_OUTPUT
           else
             echo "has_sarif=false" >> $GITHUB_OUTPUT
           fi
 
-          if [ -f "${MERGESAFE_OUT_DIR}/summary.md" ]; then
+          if [ -f "$OUT_DIR/summary.md" ]; then
             echo "has_summary=true" >> $GITHUB_OUTPUT
           else
             echo "has_summary=false" >> $GITHUB_OUTPUT
           fi
 
           echo "Found files:"
-          find "${MERGESAFE_OUT_DIR}" -maxdepth 2 -type f -print || true
+          find "$OUT_DIR" -maxdepth 2 -type f -print || true
 
       - name: Upload SARIF
         if: ${{ always() && env.UPLOAD_SARIF == 'true' && steps.ms_out.outputs.has_sarif == 'true' }}
         uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: ${{ env.MERGESAFE_OUT_DIR }}/results.sarif
+          sarif_file: ${{ env.MERGESAFE_OUT_DIR || 'mergesafe' }}/results.sarif
 
       - name: Comment PR summary
         if: ${{ always() && github.event_name == 'pull_request' && env.COMMENT_PR == 'true' && steps.ms_out.outputs.has_summary == 'true' }}
