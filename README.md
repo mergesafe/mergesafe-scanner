@@ -22,7 +22,7 @@ Generated outputs:
 - `mergesafe/results.sarif`
 - `mergesafe/report.html`
 
-Default engines are `mergesafe,semgrep,gitleaks`. Missing Semgrep/Gitleaks binaries are auto-installed by default into `${HOME}/.mergesafe/tools` (override with `MERGESAFE_TOOLS_DIR`).
+Default engines are `mergesafe,semgrep,gitleaks,cisco,osv`. `trivy` is supported but optional via `--engines trivy` (or include it in a custom engines list). Missing engine binaries are auto-installed by default into `${HOME}/.mergesafe/tools` (override with `MERGESAFE_TOOLS_DIR`).
 
 ## Workspace packages
 
@@ -41,7 +41,7 @@ Default engines are `mergesafe,semgrep,gitleaks`. Missing Semgrep/Gitleaks binar
 - `--concurrency <n>`
 - `--fail-on critical|high|none` default `high`
 - `--config <path>` (optional YAML)
-- `--engines <csv|space-separated>` default `mergesafe,semgrep,gitleaks`
+- `--engines <csv|space-separated>` default `mergesafe,semgrep,gitleaks,cisco,osv`
 - `--auto-install <true|false>` default `true`
 - `--no-auto-install` disable tool bootstrap
 - `--redact`
@@ -57,3 +57,17 @@ Expected output files:
 - `mergesafe-test/summary.md`
 - `mergesafe-test/results.sarif`
 - `mergesafe-test/report.html`
+
+## v0.1.0 engine behavior
+
+- Running `mergesafe scan <path>` with no `--engines` now attempts: `mergesafe, semgrep, gitleaks, cisco, osv`.
+- `trivy` is available but not included in the default set.
+- If `--no-auto-install` is set, missing engines are marked as `skipped` with install hints in `report.json`.
+- Engine failures are non-fatal: scan output files are still written.
+
+## Tool cache + offline-first defaults
+
+- Default cache dir: `~/.mergesafe/tools`
+- Override cache dir: `MERGESAFE_TOOLS_DIR`
+- MergeSafe is offline-first: code is scanned locally and not uploaded by default.
+- Remote analyzers (including LLM-backed analysis) are opt-in and OFF by default.

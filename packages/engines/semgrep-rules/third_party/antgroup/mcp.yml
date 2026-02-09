@@ -1,0 +1,7 @@
+rules:
+  - id: antgroup.mcp.eval-js
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: Avoid eval in MCP handlers.
+    patterns:
+      - pattern: eval(...)

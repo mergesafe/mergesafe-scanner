@@ -109,14 +109,14 @@ export function resolveConfig(opts: Record<string, string | boolean>): CliConfig
       : parseBooleanOpt((opts['auto-install'] as string | boolean | undefined) ?? (cfg.autoInstall as boolean | undefined), true),
     engines: parseListOpt(
       (opts.engines as string | undefined) ?? (cfg.engines as string | string[] | undefined),
-      ['mergesafe', 'semgrep', 'gitleaks']
+      ['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv']
     ),
   };
 }
 
-export async function runScan(scanPath: string, config: CliConfig): Promise<ScanResult> {
-  const selected = config.engines ?? ['mergesafe', 'semgrep', 'gitleaks'];
-  const { findings, meta } = await runEngines({ scanPath, config }, selected, defaultAdapters);
+export async function runScan(scanPath: string, config: CliConfig, adapters = defaultAdapters): Promise<ScanResult> {
+  const selected = config.engines ?? ['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv'];
+  const { findings, meta } = await runEngines({ scanPath, config }, selected, adapters);
   const summary = summarize(findings, config.failOn);
 
   return {
