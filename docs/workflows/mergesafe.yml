@@ -24,7 +24,6 @@ jobs:
           path: .
           mode: fast
           fail_on: high
-          engines: mergesafe
           out_dir: mergesafe
           upload_sarif: ${{ env.UPLOAD_SARIF }}
           comment_pr: ${{ env.COMMENT_PR }}

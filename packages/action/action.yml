@@ -16,7 +16,7 @@ inputs:
   engines:
     description: 'Comma-separated engines list (e.g. mergesafe,semgrep,gitleaks)'
     required: false
-    default: 'mergesafe'
+    default: 'mergesafe,semgrep,gitleaks'
   out_dir:
     description: 'Output directory (relative to repo root)'
     required: false
@@ -48,37 +48,11 @@ runs:
         corepack prepare pnpm@10.0.0 --activate
         pnpm -v
 
-    # Install semgrep only if requested
-    - uses: actions/setup-python@v5
-      if: ${{ contains(inputs.engines, 'semgrep') }}
+    - uses: actions/cache@v4
       with:
-        python-version: '3.x'
+        path: ${{ runner.temp }}/mergesafe-tools
+        key: mergesafe-tools-${{ runner.os }}-${{ runner.arch }}
 
-    - name: Install Semgrep (best-effort)
-      if: ${{ contains(inputs.engines, 'semgrep') }}
-      continue-on-error: true
-      shell: bash
-      run: |
-        python -m pip install --upgrade pip
-        python -m pip install semgrep
-        semgrep --version || true
-
-    # Install gitleaks only if requested
-    - uses: actions/setup-go@v5
-      if: ${{ contains(inputs.engines, 'gitleaks') }}
-      with:
-        go-version: '1.22'
-
-    - name: Install Gitleaks (best-effort)
-      if: ${{ contains(inputs.engines, 'gitleaks') }}
-      continue-on-error: true
-      shell: bash
-      run: |
-        go install github.com/gitleaks/gitleaks/v8@latest
-        echo "$HOME/go/bin" >> $GITHUB_PATH
-        gitleaks version || true
-
-    # Install MergeSafe action-repo deps (so we can run the CLI from source)
     - name: Install MergeSafe dependencies
       shell: bash
       working-directory: ${{ github.action_path }}/../..
@@ -87,6 +61,8 @@ runs:
     - name: Run MergeSafe scan (scans USER repo)
       shell: bash
       working-directory: ${{ github.action_path }}/../..
+      env:
+        MERGESAFE_TOOLS_DIR: ${{ runner.temp }}/mergesafe-tools
       run: |
         SCAN_PATH="${GITHUB_WORKSPACE}/${{ inputs.path }}"
         OUT_DIR="${GITHUB_WORKSPACE}/${{ inputs.out_dir }}"
@@ -126,4 +102,3 @@ runs:
             issue_number: context.issue.number,
             body,
           });
-

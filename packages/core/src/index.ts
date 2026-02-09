@@ -80,6 +80,7 @@ export interface CliConfig {
   concurrency: number;
   failOn: 'critical'|'high'|'none';
   redact: boolean;
+  autoInstall: boolean;
   engines?: string[];
 }
 

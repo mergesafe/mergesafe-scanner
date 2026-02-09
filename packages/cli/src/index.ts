@@ -22,7 +22,7 @@ function parseArgs(argv: string[]): ParsedArgs {
       const token = normalized[i];
       if (!token.startsWith('--')) continue;
       const key = token.slice(2);
-      if (key === 'list-engines' || key === 'redact') {
+      if (key === 'list-engines' || key === 'redact' || key === 'no-auto-install') {
         opts[key] = true;
         continue;
       }
@@ -40,7 +40,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     const token = rest[i];
     if (!token.startsWith('--')) continue;
     const key = token.slice(2);
-    if (key === 'redact') {
+    if (key === 'redact' || key === 'no-auto-install') {
       opts[key] = true;
       continue;
     }
@@ -78,7 +78,17 @@ export function parseListOpt(value: string | string[] | undefined, defaults: str
   return deduped.length ? deduped : defaults;
 }
 
-function resolveConfig(opts: Record<string, string | boolean>): CliConfig {
+
+function parseBooleanOpt(value: string | boolean | undefined, defaultValue: boolean): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value !== 'string') return defaultValue;
+  const normalized = value.trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  return defaultValue;
+}
+
+export function resolveConfig(opts: Record<string, string | boolean>): CliConfig {
   const cfg = loadConfig(opts.config as string | undefined);
   const parsedFormats = parseListOpt(
     (opts.format as string | undefined) ?? (cfg.format as string | string[] | undefined),
@@ -94,15 +104,18 @@ function resolveConfig(opts: Record<string, string | boolean>): CliConfig {
     concurrency: Number((opts.concurrency as string) ?? cfg.concurrency ?? 4),
     failOn: ((opts['fail-on'] as CliConfig['failOn']) ?? cfg.failOn ?? 'high'),
     redact: Boolean(opts.redact ?? cfg.redact ?? false),
+    autoInstall: opts['no-auto-install']
+      ? false
+      : parseBooleanOpt((opts['auto-install'] as string | boolean | undefined) ?? (cfg.autoInstall as boolean | undefined), true),
     engines: parseListOpt(
       (opts.engines as string | undefined) ?? (cfg.engines as string | string[] | undefined),
-      ['mergesafe']
+      ['mergesafe', 'semgrep', 'gitleaks']
     ),
   };
 }
 
 export async function runScan(scanPath: string, config: CliConfig): Promise<ScanResult> {
-  const selected = config.engines ?? ['mergesafe'];
+  const selected = config.engines ?? ['mergesafe', 'semgrep', 'gitleaks'];
   const { findings, meta } = await runEngines({ scanPath, config }, selected, defaultAdapters);
   const summary = summarize(findings, config.failOn);
 
@@ -174,6 +187,7 @@ async function main() {
   const outputPath = writeOutputs(result, config);
 
   console.log(`MergeSafe: wrote outputs to ${outputPath}`);
+  console.log(`Engines: ${result.meta.engines?.map((entry) => `${entry.engineId}=${entry.status}`).join(' ') ?? 'none'}`);
   console.log(`MergeSafe ${result.summary.status} grade ${result.summary.grade} findings=${result.summary.totalFindings}`);
   process.exitCode = result.summary.status === 'FAIL' ? 2 : 0;
 }
