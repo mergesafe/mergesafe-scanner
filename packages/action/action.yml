@@ -14,9 +14,9 @@ inputs:
     required: false
     default: 'high'
   engines:
-    description: 'Comma-separated engines list (e.g. mergesafe,semgrep,gitleaks)'
+    description: 'Optional comma-separated engines list; default scanner engines are used when omitted.'
     required: false
-    default: 'mergesafe,semgrep,gitleaks'
+    default: ''
   out_dir:
     description: 'Output directory (relative to repo root)'
     required: false
@@ -28,7 +28,7 @@ inputs:
   comment_pr:
     description: 'Comment PR summary'
     required: false
-    default: 'true'
+    default: 'false'
   config:
     description: 'Optional config file path (relative to repo root)'
     required: false
@@ -67,8 +67,12 @@ runs:
         SCAN_PATH="${GITHUB_WORKSPACE}/${{ inputs.path }}"
         OUT_DIR="${GITHUB_WORKSPACE}/${{ inputs.out_dir }}"
         CONFIG_ARG=""
+        ENGINES_ARG=""
         if [ -n "${{ inputs.config }}" ]; then
           CONFIG_ARG="--config ${GITHUB_WORKSPACE}/${{ inputs.config }}"
+        fi
+        if [ -n "${{ inputs.engines }}" ]; then
+          ENGINES_ARG="--engines ${{ inputs.engines }}"
         fi
 
         echo "MERGESAFE_OUT_DIR=$OUT_DIR" >> $GITHUB_ENV
@@ -76,19 +80,28 @@ runs:
         pnpm -C packages/cli dev -- scan "$SCAN_PATH" \
           --mode "${{ inputs.mode }}" \
           --fail-on "${{ inputs.fail_on }}" \
-          --engines "${{ inputs.engines }}" \
           --out-dir "$OUT_DIR" \
           --format "json,html,sarif,md" \
+          $ENGINES_ARG \
           $CONFIG_ARG
 
+    - name: Check MergeSafe outputs
+      id: outputs
+      shell: bash
+      run: |
+        OUT_DIR="${MERGESAFE_OUT_DIR:-${GITHUB_WORKSPACE}/${{ inputs.out_dir }}}"
+        echo "out_dir=$OUT_DIR" >> "$GITHUB_OUTPUT"
+        [ -f "$OUT_DIR/results.sarif" ] && echo "has_sarif=true" >> "$GITHUB_OUTPUT" || echo "has_sarif=false" >> "$GITHUB_OUTPUT"
+        [ -f "$OUT_DIR/summary.md" ] && echo "has_summary=true" >> "$GITHUB_OUTPUT" || echo "has_summary=false" >> "$GITHUB_OUTPUT"
+
     - name: Upload SARIF
-      if: ${{ inputs.upload_sarif == 'true' }}
+      if: ${{ inputs.upload_sarif == 'true' && steps.outputs.outputs.has_sarif == 'true' }}
       uses: github/codeql-action/upload-sarif@v4
       with:
-        sarif_file: ${{ env.MERGESAFE_OUT_DIR }}/results.sarif
+        sarif_file: ${{ steps.outputs.outputs.out_dir }}/results.sarif
 
     - name: Comment PR summary
-      if: ${{ inputs.comment_pr == 'true' && github.event_name == 'pull_request' }}
+      if: ${{ inputs.comment_pr == 'true' && github.event_name == 'pull_request' && steps.outputs.outputs.has_summary == 'true' }}
       uses: actions/github-script@v7
       with:
         script: |
