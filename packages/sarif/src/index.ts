@@ -41,37 +41,65 @@ function toSarifLevel(severity: string): SarifLevel {
 function findingToSarifResult(finding: Finding, engineId: string, redact: boolean): SarifResult {
   const source = finding.engineSources.find((entry) => entry.engineId === engineId) ?? finding.engineSources[0];
   const location = finding.locations[0];
-  const safeMessage = redact
-    ? `${finding.title} (${engineId})`
-    : `${finding.title} (${engineId}) - ${finding.remediation}`;
+  const safeMessage = redact ? `${finding.title} (${engineId})` : `${finding.title} (${engineId}) - ${finding.remediation}`;
 
   return {
     ruleId: source?.engineRuleId ?? finding.findingId,
     level: toSarifLevel(finding.severity),
     message: { text: safeMessage },
     locations: location
-      ? [{
-          physicalLocation: {
-            artifactLocation: { uri: location.filePath },
-            region: { startLine: location.line ?? 1, startColumn: location.column },
+      ? [
+          {
+            physicalLocation: {
+              artifactLocation: { uri: location.filePath },
+              region: { startLine: location.line ?? 1, startColumn: location.column },
+            },
           },
-        }]
+        ]
       : undefined,
     fingerprints: { primaryLocationLineHash: finding.fingerprint },
   };
 }
 
-function findingsRun(engineId: string, displayName: string, findings: Finding[], redact: boolean): SarifRun {
-  const rules = findings.map((finding) => {
-    const source = finding.engineSources.find((entry) => entry.engineId === engineId) ?? finding.engineSources[0];
-    return {
-      id: source?.engineRuleId ?? finding.findingId,
-      name: finding.title,
-      shortDescription: { text: finding.title },
-    };
-  });
+/**
+ * GitHub rejects SARIF when tool.driver.rules contains duplicate items / ids.
+ * Imported SARIF can also include duplicate rules, so we normalize every run.
+ */
+function dedupeSarifRunRules(run: SarifRun): SarifRun {
+  const rules = run?.tool?.driver?.rules;
+  if (!Array.isArray(rules) || rules.length === 0) return run;
 
-  return {
+  const byId = new Map<string, (typeof rules)[number]>();
+  for (const r of rules) {
+    const id = r?.id;
+    if (!id) continue;
+    if (!byId.has(id)) byId.set(id, r);
+  }
+
+  run.tool.driver.rules = Array.from(byId.values());
+  return run;
+}
+
+function findingsRun(engineId: string, displayName: string, findings: Finding[], redact: boolean): SarifRun {
+  // Build rules UNIQUE BY id (not one-per-finding).
+  const ruleById = new Map<string, { id: string; name?: string; shortDescription?: { text: string } }>();
+
+  for (const finding of findings) {
+    const source = finding.engineSources.find((entry) => entry.engineId === engineId) ?? finding.engineSources[0];
+    const id = source?.engineRuleId ?? finding.findingId;
+
+    if (!ruleById.has(id)) {
+      ruleById.set(id, {
+        id,
+        name: finding.title,
+        shortDescription: { text: finding.title },
+      });
+    }
+  }
+
+  const rules = Array.from(ruleById.values());
+
+  const run: SarifRun = {
     tool: {
       driver: {
         name: engineId === 'mergesafe' ? 'MergeSafe' : displayName,
@@ -81,19 +109,28 @@ function findingsRun(engineId: string, displayName: string, findings: Finding[],
     },
     results: findings.map((finding) => findingToSarifResult(finding, engineId, redact)),
   };
+
+  return dedupeSarifRunRules(run);
 }
 
 function parseSarifRuns(filePath: string): SarifRun[] {
   if (!fs.existsSync(filePath)) return [];
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as { runs?: SarifRun[] };
-    return Array.isArray(parsed.runs) ? parsed.runs : [];
+    const runs = Array.isArray(parsed.runs) ? parsed.runs : [];
+    // Normalize imported runs too.
+    return runs.map(dedupeSarifRunRules);
   } catch {
     return [];
   }
 }
 
-export function mergeSarifRuns(args: { outDir: string; enginesMeta: EngineExecutionMeta[]; canonicalFindings: Finding[]; redact: boolean }): SarifLog {
+export function mergeSarifRuns(args: {
+  outDir: string;
+  enginesMeta: EngineExecutionMeta[];
+  canonicalFindings: Finding[];
+  redact: boolean;
+}): SarifLog {
   const { outDir, enginesMeta, canonicalFindings, redact } = args;
   const runs: SarifRun[] = [];
 
@@ -106,7 +143,11 @@ export function mergeSarifRuns(args: { outDir: string; enginesMeta: EngineExecut
     }
   }
 
-  const allEngineIds = new Set<string>(['mergesafe', ...enginesMeta.map((entry) => entry.engineId), ...findingsByEngine.keys()]);
+  const allEngineIds = new Set<string>([
+    'mergesafe',
+    ...enginesMeta.map((entry) => entry.engineId),
+    ...findingsByEngine.keys(),
+  ]);
 
   for (const engineId of allEngineIds) {
     const meta = enginesMeta.find((entry) => entry.engineId === engineId);
@@ -122,10 +163,13 @@ export function mergeSarifRuns(args: { outDir: string; enginesMeta: EngineExecut
     runs.push(findingsRun(engineId, displayName, findings, redact));
   }
 
+  // Final safety normalize across all runs.
+  const normalizedRuns = runs.map(dedupeSarifRunRules);
+
   const log: SarifLog = {
     version: '2.1.0',
     $schema: 'https://json.schemastore.org/sarif-2.1.0.json',
-    runs,
+    runs: normalizedRuns,
   };
 
   fs.mkdirSync(path.resolve(outDir), { recursive: true });
