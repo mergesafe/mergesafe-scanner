@@ -20,15 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # (Optional but recommended) ensure predictable node/pnpm on runner
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
+      # The composite action already sets up Node + pnpm (corepack) and installs deps.
       - name: Run MergeSafe (multi-engine)
         uses: mergesafe/mergesafe-scanner/packages/action@main
         with:
@@ -40,19 +32,43 @@ jobs:
           upload_sarif: "false"
           comment_pr: "false"
 
+      - name: Check outputs exist
+        if: always()
+        id: ms_out
+        shell: bash
+        run: |
+          echo "MERGESAFE_OUT_DIR=${MERGESAFE_OUT_DIR}"
+          if [ -f "${MERGESAFE_OUT_DIR}/results.sarif" ]; then
+            echo "has_sarif=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_sarif=false" >> $GITHUB_OUTPUT
+          fi
+
+          if [ -f "${MERGESAFE_OUT_DIR}/summary.md" ]; then
+            echo "has_summary=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_summary=false" >> $GITHUB_OUTPUT
+          fi
+
+          echo "Found files:"
+          find "${MERGESAFE_OUT_DIR}" -maxdepth 2 -type f -print || true
+
       - name: Upload SARIF
-        if: ${{ always() && env.UPLOAD_SARIF == 'true' }}
+        if: ${{ always() && env.UPLOAD_SARIF == 'true' && steps.ms_out.outputs.has_sarif == 'true' }}
         uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: mergesafe/results.sarif
+          sarif_file: ${{ env.MERGESAFE_OUT_DIR }}/results.sarif
 
       - name: Comment PR summary
-        if: ${{ always() && github.event_name == 'pull_request' && env.COMMENT_PR == 'true' }}
+        if: ${{ always() && github.event_name == 'pull_request' && env.COMMENT_PR == 'true' && steps.ms_out.outputs.has_summary == 'true' }}
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const body = fs.readFileSync('mergesafe/summary.md', 'utf8');
+            const path = require('path');
+            const outDir = process.env.MERGESAFE_OUT_DIR || 'mergesafe';
+            const summaryPath = path.join(outDir, 'summary.md');
+            const body = fs.readFileSync(summaryPath, 'utf8');
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
