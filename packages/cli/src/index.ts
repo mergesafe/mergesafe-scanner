@@ -6,7 +6,7 @@ import YAML from 'yaml';
 import { summarize, type CliConfig, type ScanResult } from '@mergesafe/core';
 import { runEngines, defaultAdapters, listEngines } from '@mergesafe/engines';
 import { generateHtmlReport, generateSummaryMarkdown } from '@mergesafe/report';
-import { toSarif } from '@mergesafe/sarif';
+import { mergeSarifRuns } from '@mergesafe/sarif';
 
 const DEFAULT_FORMATS = ['json', 'html', 'sarif', 'md'] as const;
 const ALLOWED_FORMATS = new Set(DEFAULT_FORMATS);
@@ -156,7 +156,7 @@ export function writeOutputs(result: ScanResult, config: CliConfig) {
   if (wants.has('json')) fs.writeFileSync(path.join(outDirAbs, 'report.json'), JSON.stringify(result, null, 2));
   if (wants.has('md')) fs.writeFileSync(path.join(outDirAbs, 'summary.md'), generateSummaryMarkdown(result));
   if (wants.has('html')) fs.writeFileSync(path.join(outDirAbs, 'report.html'), generateHtmlReport(result));
-  if (wants.has('sarif')) fs.writeFileSync(path.join(outDirAbs, 'results.sarif'), JSON.stringify(toSarif(result), null, 2));
+  if (wants.has('sarif')) mergeSarifRuns({ outDir: outDirAbs, enginesMeta: result.meta.engines ?? [], canonicalFindings: result.findings, redact: result.meta.redacted });
 
   return outDirAbs;
 }

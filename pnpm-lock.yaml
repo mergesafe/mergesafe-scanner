@@ -9,7 +9,7 @@ importers:
   .:
     devDependencies:
       '@types/node':
-        specifier: ^20.17.24
+        specifier: ^20.19.33
         version: 20.19.33
       tsx:
         specifier: ^4.19.3

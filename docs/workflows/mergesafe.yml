@@ -1,23 +1,23 @@
 name: MergeSafe
 on:
-  workflow_dispatch:
-  # In your own repository, you can enable automatic PR scans:
-  # pull_request:
-  #   branches: [ main ]
+  pull_request:
+
 permissions:
   contents: read
   security-events: write
+  # Needed only when COMMENT_PR is true
   pull-requests: write
 
 env:
-  UPLOAD_SARIF: 'true'
-  COMMENT_PR: 'true'
+  COMMENT_PR: 'false'
+  MERGESAFE_TOOLS_DIR: ${{ runner.temp }}/mergesafe-tools
 
 jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Run MergeSafe
         uses: mergesafe/mergesafe-scanner/packages/action@main
         with:
@@ -25,20 +25,44 @@ jobs:
           mode: fast
           fail_on: high
           out_dir: mergesafe
-          upload_sarif: ${{ env.UPLOAD_SARIF }}
-          comment_pr: ${{ env.COMMENT_PR }}
+          upload_sarif: 'false'
+          comment_pr: 'false'
+
+      - name: Check MergeSafe outputs
+        id: outputs
+        shell: bash
+        run: |
+          OUT_DIR="${MERGESAFE_OUT_DIR:-${GITHUB_WORKSPACE}/mergesafe}"
+          echo "out_dir=$OUT_DIR" >> "$GITHUB_OUTPUT"
+          [ -f "$OUT_DIR/results.sarif" ] && echo "has_sarif=true" >> "$GITHUB_OUTPUT" || echo "has_sarif=false" >> "$GITHUB_OUTPUT"
+          [ -f "$OUT_DIR/summary.md" ] && echo "has_summary=true" >> "$GITHUB_OUTPUT" || echo "has_summary=false" >> "$GITHUB_OUTPUT"
+
       - name: Upload SARIF
-        if: ${{ env.UPLOAD_SARIF == 'true' }}
+        if: ${{ steps.outputs.outputs.has_sarif == 'true' }}
         uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: mergesafe/results.sarif
+          sarif_file: ${{ steps.outputs.outputs.out_dir }}/results.sarif
+
+      - name: Upload report artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mergesafe-report
+          if-no-files-found: warn
+          path: |
+            ${{ steps.outputs.outputs.out_dir }}/report.json
+            ${{ steps.outputs.outputs.out_dir }}/report.html
+            ${{ steps.outputs.outputs.out_dir }}/summary.md
+            ${{ steps.outputs.outputs.out_dir }}/results.sarif
+
       - name: Comment PR summary
-        if: ${{ github.event_name == 'pull_request' && env.COMMENT_PR == 'true' }}
+        if: ${{ github.event_name == 'pull_request' && env.COMMENT_PR == 'true' && steps.outputs.outputs.has_summary == 'true' }}
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const body = fs.readFileSync('mergesafe/summary.md', 'utf8');
+            const path = require('path');
+            const outDir = '${{ steps.outputs.outputs.out_dir }}';
+            const body = fs.readFileSync(path.join(outDir, 'summary.md'), 'utf8');
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,

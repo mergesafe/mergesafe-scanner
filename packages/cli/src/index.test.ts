@@ -40,6 +40,9 @@ describe('golden scan', () => {
     expect(outputPath).toBe(normalizeOutDir(outDir));
     expect(fs.existsSync(path.join(outDir, 'report.json'))).toBe(true);
     expect(fs.existsSync(path.join(outDir, 'results.sarif'))).toBe(true);
+    const sarif = JSON.parse(fs.readFileSync(path.join(outDir, 'results.sarif'), 'utf8'));
+    expect(Array.isArray(sarif.runs)).toBe(true);
+    expect(sarif.runs.length).toBeGreaterThan(0);
     expect(fs.existsSync(path.join(outDir, 'summary.md'))).toBe(true);
     expect(fs.existsSync(path.join(outDir, 'report.html'))).toBe(true);
     expect(result.findings.length).toBeGreaterThan(0);
@@ -137,6 +140,12 @@ describe('resilience', () => {
 
     expect(outputPath).toBe(normalizeOutDir(outDir));
     expect(fs.existsSync(path.join(outDir, 'report.json'))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, 'summary.md'))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, 'report.html'))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, 'results.sarif'))).toBe(true);
+    const sarif = JSON.parse(fs.readFileSync(path.join(outDir, 'results.sarif'), 'utf8'));
+    expect(Array.isArray(sarif.runs)).toBe(true);
+    expect(sarif.runs.length).toBeGreaterThan(0);
     expect(result.meta.engines?.find((entry) => entry.engineId === 'boom')?.status).toBe('failed');
   });
 });
