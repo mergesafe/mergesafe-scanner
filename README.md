@@ -22,6 +22,8 @@ Generated outputs:
 - `mergesafe/results.sarif`
 - `mergesafe/report.html`
 
+Default engines are `mergesafe,semgrep,gitleaks`. Missing Semgrep/Gitleaks binaries are auto-installed by default into `${HOME}/.mergesafe/tools` (override with `MERGESAFE_TOOLS_DIR`).
+
 ## Workspace packages
 
 - `packages/cli`: `mergesafe scan <path>` command
@@ -39,4 +41,19 @@ Generated outputs:
 - `--concurrency <n>`
 - `--fail-on critical|high|none` default `high`
 - `--config <path>` (optional YAML)
+- `--engines <csv|space-separated>` default `mergesafe,semgrep,gitleaks`
+- `--auto-install <true|false>` default `true`
+- `--no-auto-install` disable tool bootstrap
 - `--redact`
+
+Windows smoke test:
+
+```bash
+pnpm -C packages/cli dev -- scan fixtures/node-unsafe-server --out-dir mergesafe-test --fail-on none
+```
+
+Expected output files:
+- `mergesafe-test/report.json`
+- `mergesafe-test/summary.md`
+- `mergesafe-test/results.sarif`
+- `mergesafe-test/report.html`

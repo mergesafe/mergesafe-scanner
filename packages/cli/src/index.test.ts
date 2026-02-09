@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
-import { runScan, writeOutputs, normalizeOutDir, parseListOpt } from './index.js';
+import { runScan, writeOutputs, normalizeOutDir, parseListOpt, resolveConfig } from './index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = path.resolve(here, '../../../fixtures/node-unsafe-server');
@@ -22,6 +22,7 @@ describe('golden scan', () => {
       concurrency: 4,
       failOn: 'none',
       redact: false,
+      autoInstall: false,
     });
 
     const outputPath = writeOutputs(result, {
@@ -32,6 +33,7 @@ describe('golden scan', () => {
       concurrency: 4,
       failOn: 'none',
       redact: false,
+      autoInstall: false,
     });
 
     expect(outputPath).toBe(normalizeOutDir(outDir));
@@ -56,6 +58,7 @@ describe('golden scan', () => {
       concurrency: 4,
       failOn: 'high',
       redact: false,
+      autoInstall: false,
     });
     expect(result.summary.bySeverity.high + result.summary.bySeverity.critical).toBeGreaterThan(0);
     expect(result.summary.status).toBe('FAIL');
@@ -63,6 +66,13 @@ describe('golden scan', () => {
 });
 
 describe('option parsing utilities', () => {
+
+  test('resolveConfig defaults engines to multi-engine and auto-install on', () => {
+    const config = resolveConfig({});
+    expect(config.engines).toEqual(['mergesafe', 'semgrep', 'gitleaks']);
+    expect(config.autoInstall).toBe(true);
+  });
+
   test('parseListOpt accepts comma and whitespace-separated values', () => {
     expect(parseListOpt('json,html,sarif,md', ['json'])).toEqual(['json', 'html', 'sarif', 'md']);
     expect(parseListOpt('json html sarif md', ['json'])).toEqual(['json', 'html', 'sarif', 'md']);

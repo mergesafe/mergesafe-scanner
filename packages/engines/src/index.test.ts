@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { runEngines, type EngineAdapter } from './index.js';
 import type { CliConfig, Finding } from '@mergesafe/core';
 
@@ -10,6 +10,7 @@ const config: CliConfig = {
   concurrency: 2,
   failOn: 'none',
   redact: false,
+  autoInstall: false,
   engines: ['stub-a', 'stub-b', 'stub-timeout'],
 };
 
@@ -76,5 +77,23 @@ describe('engine runner', () => {
     const result = await runEngines({ scanPath: '.', config: { ...config, timeout: 2, engines: ['stub-a', 'stub-b'] } }, ['stub-a', 'stub-b'], [adapterA, adapterB]);
     expect(result.findings).toHaveLength(1);
     expect(result.findings[0].engineSources.map((source) => source.engineId).sort()).toEqual(['stub-a', 'stub-b']);
+  });
+});
+
+
+describe('binary detection', () => {
+  test('uses where.exe on Windows', async () => {
+    vi.resetModules();
+    const execFileMock = vi.fn((file: string, args: string[], _opts: any, cb: any) => cb(null, 'C:\\Tools\\semgrep.exe\n', ''));
+    vi.doMock('node:child_process', () => ({ execFile: execFileMock }));
+
+    const mod = await import('./index.js');
+    const platformSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    const ok = await mod.hasBinary('semgrep');
+
+    expect(ok).toBe(true);
+    expect(execFileMock).toHaveBeenCalled();
+    expect(execFileMock.mock.calls[0][0]).toBe('where.exe');
+    platformSpy.mockRestore();
   });
 });
