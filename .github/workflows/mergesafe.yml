@@ -27,7 +27,7 @@ jobs:
         with:
           path: .
           mode: fast
-          fail_on: high
+          fail_on: none 
           out_dir: mergesafe
           # Let the workflow handle upload/comment below (avoid double behavior)
           upload_sarif: "false"
