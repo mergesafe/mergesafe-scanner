@@ -15,7 +15,11 @@ import {
 } from '@mergesafe/core';
 import { runDeterministicRules } from '@mergesafe/rules';
 
-function execFilePromise(file: string, args: string[], options: Parameters<typeof execFile>[2] = {}): Promise<{ stdout: string; stderr: string }> {
+function execFilePromise(
+  file: string,
+  args: string[],
+  options: Parameters<typeof execFile>[2] = {}
+): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     execFile(file, args, options, (error, stdout, stderr) => {
       if (error) {
@@ -27,7 +31,11 @@ function execFilePromise(file: string, args: string[], options: Parameters<typeo
   });
 }
 
-function execFileAllowFailure(file: string, args: string[], options: Parameters<typeof execFile>[2] = {}): Promise<{ stdout: string; stderr: string; code: number }> {
+function execFileAllowFailure(
+  file: string,
+  args: string[],
+  options: Parameters<typeof execFile>[2] = {}
+): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve) => {
     execFile(file, args, options, (error, stdout, stderr) => {
       const code = (error as any)?.code ?? 0;
@@ -109,20 +117,60 @@ function updateToolsManifest(tool: string, version: string, binaryPath: string):
   const file = toolsManifestPath();
   let data: Record<string, { version: string; binaryPath: string; installedAt: string }> = {};
   if (fs.existsSync(file)) {
-    data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    try {
+      data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+      data = {};
+    }
   }
   data[tool] = { version, binaryPath, installedAt: new Date().toISOString() };
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
 
+function venvBinDir(venvDir: string): string {
+  return process.platform === 'win32' ? path.join(venvDir, 'Scripts') : path.join(venvDir, 'bin');
+}
+
+function venvPythonExecutable(venvDir: string): string {
+  const bin = venvBinDir(venvDir);
+  return process.platform === 'win32' ? path.join(bin, 'python.exe') : path.join(bin, 'python');
+}
+
+async function venvPipInstall(
+  venvDir: string,
+  args: string[],
+  opts: Parameters<typeof execFile>[2] = {}
+): Promise<void> {
+  const py = venvPythonExecutable(venvDir);
+  await execFilePromise(py, ['-m', 'pip', ...args], opts);
+}
+
 function semgrepExecutable(venvDir: string): string {
-  return process.platform === 'win32' ? path.join(venvDir, 'Scripts', 'semgrep.exe') : path.join(venvDir, 'bin', 'semgrep');
+  const bin = venvBinDir(venvDir);
+  const candidates = process.platform === 'win32' ? ['semgrep.exe', 'semgrep'] : ['semgrep'];
+  for (const c of candidates) {
+    const p = path.join(bin, c);
+    if (fs.existsSync(p)) return p;
+  }
+  return process.platform === 'win32' ? path.join(bin, 'semgrep.exe') : path.join(bin, 'semgrep');
 }
-function pipExecutable(venvDir: string): string {
-  return process.platform === 'win32' ? path.join(venvDir, 'Scripts', 'pip.exe') : path.join(venvDir, 'bin', 'pip');
-}
+
 function ciscoExecutable(venvDir: string): string {
-  return process.platform === 'win32' ? path.join(venvDir, 'Scripts', 'mcp-scanner.exe') : path.join(venvDir, 'bin', 'mcp-scanner');
+  const bin = venvBinDir(venvDir);
+
+  // Cisco package naming varies; be tolerant.
+  const candidates =
+    process.platform === 'win32'
+      ? ['mcp-scanner.exe', 'mcp_scanner.exe', 'mcp-scanner', 'mcp_scanner']
+      : ['mcp-scanner', 'mcp_scanner'];
+
+  for (const c of candidates) {
+    const p = path.join(bin, c);
+    if (fs.existsSync(p)) return p;
+  }
+
+  // default fallback
+  return process.platform === 'win32' ? path.join(bin, 'mcp-scanner.exe') : path.join(bin, 'mcp-scanner');
 }
 
 function cachedBinary(tool: string, versionTag: string, exe: string): string {
@@ -192,12 +240,14 @@ async function ensureGithubReleaseBinary(args: {
   const target = cachedBinary(args.tool, versionTag, exe);
   if (fs.existsSync(target)) return target;
 
-  const releaseUrl = versionTag === 'latest'
-    ? `https://api.github.com/repos/${args.owner}/${args.repo}/releases/latest`
-    : `https://api.github.com/repos/${args.owner}/${args.repo}/releases/tags/${versionTag}`;
+  const releaseUrl =
+    versionTag === 'latest'
+      ? `https://api.github.com/repos/${args.owner}/${args.repo}/releases/latest`
+      : `https://api.github.com/repos/${args.owner}/${args.repo}/releases/tags/${versionTag}`;
   const release = await fetchJson(releaseUrl);
   const asset = (release.assets ?? []).find((entry: any) => makeAssetMatcher(args.tool)(String(entry.name ?? '')));
-  if (!asset?.browser_download_url) throw new Error(`No ${args.tool} release asset found for ${process.platform}/${process.arch}`);
+  if (!asset?.browser_download_url)
+    throw new Error(`No ${args.tool} release asset found for ${process.platform}/${process.arch}`);
 
   const baseDir = path.join(getToolsDir(), 'downloads', args.tool, versionTag);
   const archivePath = path.join(baseDir, String(asset.name));
@@ -206,7 +256,11 @@ async function ensureGithubReleaseBinary(args: {
   fs.mkdirSync(extractDir, { recursive: true });
 
   if (String(asset.name).endsWith('.zip')) {
-    await execFilePromise('powershell.exe', ['-NoProfile', '-Command', `Expand-Archive -Path "${archivePath}" -DestinationPath "${extractDir}" -Force`]);
+    await execFilePromise('powershell.exe', [
+      '-NoProfile',
+      '-Command',
+      `Expand-Archive -Path "${archivePath}" -DestinationPath "${extractDir}" -Force`,
+    ]);
   } else if (String(asset.name).endsWith('.tar.gz') || String(asset.name).endsWith('.tgz')) {
     await execFilePromise('tar', ['-xzf', archivePath, '-C', extractDir]);
   } else {
@@ -243,41 +297,64 @@ export async function ensureSemgrepBinary(): Promise<string> {
   const venvDir = path.join(getToolsDir(), 'venvs', 'semgrep');
   const existing = semgrepExecutable(venvDir);
   if (fs.existsSync(existing)) return existing;
+
   const python = await resolvePythonCommand();
   if (!python) throw new Error('Python is required to auto-install semgrep.');
+
   await execFilePromise(python, ['-m', 'venv', venvDir]);
-  const pip = pipExecutable(venvDir);
-  const semgrepSpec = process.env.MERGESAFE_SEMGREP_VERSION ? `semgrep==${process.env.MERGESAFE_SEMGREP_VERSION}` : 'semgrep';
-  await execFilePromise(pip, ['install', '--upgrade', 'pip'], { maxBuffer: 20 * 1024 * 1024 });
-  await execFilePromise(pip, ['install', semgrepSpec], { maxBuffer: 40 * 1024 * 1024 });
-  const binary = semgrepExecutable(venvDir);
-  if (!fs.existsSync(binary)) throw new Error('Semgrep install completed but executable was not found in venv.');
-  if (process.platform !== 'win32') fs.chmodSync(binary, 0o755);
-  updateToolsManifest('semgrep', process.env.MERGESAFE_SEMGREP_VERSION || 'latest', binary);
-  return binary;
+
+  const semgrepSpec = process.env.MERGESAFE_SEMGREP_VERSION
+    ? `semgrep==${process.env.MERGESAFE_SEMGREP_VERSION}`
+    : 'semgrep';
+
+  // ✅ Windows-safe: always pip via venv python
+  await venvPipInstall(venvDir, ['install', '--upgrade', 'pip', 'setuptools', 'wheel'], { maxBuffer: 20 * 1024 * 1024 });
+  await venvPipInstall(venvDir, ['install', '--upgrade', semgrepSpec], { maxBuffer: 40 * 1024 * 1024 });
+
+  const bin = semgrepExecutable(venvDir);
+  if (!fs.existsSync(bin)) throw new Error('Semgrep install completed but executable was not found in venv.');
+  if (process.platform !== 'win32') fs.chmodSync(bin, 0o755);
+
+  updateToolsManifest('semgrep', process.env.MERGESAFE_SEMGREP_VERSION || 'latest', bin);
+  return bin;
 }
 
 async function ensureCiscoBinary(): Promise<string> {
   const venvDir = path.join(getToolsDir(), 'venvs', 'cisco-mcp-scanner');
   const existing = ciscoExecutable(venvDir);
   if (fs.existsSync(existing)) return existing;
+
   const python = await resolvePythonCommand();
   if (!python) throw new Error('Python is required to auto-install cisco mcp-scanner.');
+
   await execFilePromise(python, ['-m', 'venv', venvDir]);
-  const pip = pipExecutable(venvDir);
+
   const pkgSpec = process.env.MERGESAFE_CISCO_VERSION ? `mcp-scanner==${process.env.MERGESAFE_CISCO_VERSION}` : 'mcp-scanner';
-  await execFilePromise(pip, ['install', '--upgrade', 'pip'], { maxBuffer: 20 * 1024 * 1024 });
-  await execFilePromise(pip, ['install', pkgSpec], { maxBuffer: 40 * 1024 * 1024 });
-  if (!fs.existsSync(existing)) throw new Error('Cisco mcp-scanner install completed but executable was not found in venv.');
-  if (process.platform !== 'win32') fs.chmodSync(existing, 0o755);
-  updateToolsManifest('cisco', process.env.MERGESAFE_CISCO_VERSION || 'latest', existing);
-  return existing;
+
+  // ✅ Windows-safe: always pip via venv python
+  await venvPipInstall(venvDir, ['install', '--upgrade', 'pip', 'setuptools', 'wheel'], { maxBuffer: 20 * 1024 * 1024 });
+  await venvPipInstall(venvDir, ['install', '--upgrade', pkgSpec], { maxBuffer: 40 * 1024 * 1024 });
+
+  const bin = ciscoExecutable(venvDir);
+  if (!fs.existsSync(bin)) throw new Error('Cisco mcp-scanner install completed but executable was not found in venv.');
+  if (process.platform !== 'win32') fs.chmodSync(bin, 0o755);
+
+  updateToolsManifest('cisco', process.env.MERGESAFE_CISCO_VERSION || 'latest', bin);
+  return bin;
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutSec: number, timeoutError: Error): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(timeoutError), Math.max(timeoutSec, 1) * 1000);
-    promise.then((r) => { clearTimeout(timer); resolve(r); }).catch((e) => { clearTimeout(timer); reject(e); });
+    promise
+      .then((r) => {
+        clearTimeout(timer);
+        resolve(r);
+      })
+      .catch((e) => {
+        clearTimeout(timer);
+        reject(e);
+      });
   });
 }
 
@@ -306,7 +383,9 @@ function canonicalFinding(args: {
     owaspMcpTop10: 'MCP-A10',
     engineSources: [{ engineId: args.engineId, engineRuleId: args.engineRuleId, engineSeverity: args.engineSeverity, message: args.message }],
     locations: [{ filePath: args.filePath, line: args.line }],
-    evidence: args.evidence?.trim() ? { excerpt: args.evidence, note: 'Engine finding evidence' } : { excerptHash, note: 'Evidence hash only (redacted or unavailable)' },
+    evidence: args.evidence?.trim()
+      ? { excerpt: args.evidence, note: 'Engine finding evidence' }
+      : { excerptHash, note: 'Evidence hash only (redacted or unavailable)' },
     remediation: args.remediation ?? 'Review and remediate based on engine guidance.',
     references: [],
     tags: [args.engineId],
@@ -329,19 +408,21 @@ export class MergeSafeAdapter implements EngineAdapter {
   async isAvailable() { return true; }
   async run(ctx: EngineContext): Promise<Finding[]> {
     const { findings: raw } = runDeterministicRules(ctx.scanPath, ctx.config.mode);
-    return raw.map((entry) => canonicalFinding({
-      engineId: this.engineId,
-      engineRuleId: entry.ruleId,
-      engineSeverity: entry.severity,
-      message: entry.title,
-      title: entry.title,
-      filePath: entry.filePath,
-      line: entry.line,
-      evidence: ctx.config.redact ? '' : entry.evidence,
-      confidence: entry.confidence,
-      category: entry.category,
-      remediation: entry.remediation,
-    }));
+    return raw.map((entry) =>
+      canonicalFinding({
+        engineId: this.engineId,
+        engineRuleId: entry.ruleId,
+        engineSeverity: entry.severity,
+        message: entry.title,
+        title: entry.title,
+        filePath: entry.filePath,
+        line: entry.line,
+        evidence: ctx.config.redact ? '' : entry.evidence,
+        confidence: entry.confidence,
+        category: entry.category,
+        remediation: entry.remediation,
+      })
+    );
   }
 }
 
@@ -350,22 +431,31 @@ export class SemgrepAdapter implements EngineAdapter {
   displayName = 'Semgrep (local rules only)';
   installHint = 'Auto-install semgrep into MergeSafe tools cache or install semgrep manually.';
   private resolvedBinary?: string;
+
   private async resolveBinary() {
     if (this.resolvedBinary && fs.existsSync(this.resolvedBinary)) return this.resolvedBinary;
-    this.resolvedBinary = existingBinary('semgrep', 'MERGESAFE_SEMGREP_VERSION', 'latest', 'semgrep') || await resolvePathBinary('semgrep') || semgrepExecutable(path.join(getToolsDir(), 'venvs', 'semgrep'));
+    this.resolvedBinary =
+      existingBinary('semgrep', 'MERGESAFE_SEMGREP_VERSION', 'latest', 'semgrep') ||
+      (await resolvePathBinary('semgrep')) ||
+      semgrepExecutable(path.join(getToolsDir(), 'venvs', 'semgrep'));
     return fs.existsSync(this.resolvedBinary) ? this.resolvedBinary : undefined;
   }
+
   async ensureAvailable() { this.resolvedBinary = await ensureSemgrepBinary(); }
+
   async version() {
     const bin = await this.resolveBinary();
     if (!bin) return 'unavailable';
     const { stdout } = await execFileAllowFailure(bin, ['--version']);
     return stdout.trim() || 'unknown';
   }
+
   async isAvailable() { return Boolean(await this.resolveBinary()); }
+
   async run(ctx: EngineContext): Promise<EngineRunResult> {
     const bin = await this.resolveBinary();
     if (!bin) throw new Error(`Not installed. ${this.installHint}`);
+
     const here = path.dirname(fileURLToPath(import.meta.url));
     const configPath = path.resolve(here, '../semgrep-rules/bundle.yml');
     const base = engineArtifactBase(ctx, this.engineId);
@@ -376,6 +466,7 @@ export class SemgrepAdapter implements EngineAdapter {
       maxBuffer: 30 * 1024 * 1024,
       env: { ...process.env, SEMGREP_SEND_METRICS: 'off' },
     });
+
     await execFileAllowFailure(bin, ['--config', configPath, '--sarif', '--output', sarifPath, ctx.scanPath], {
       maxBuffer: 30 * 1024 * 1024,
       env: { ...process.env, SEMGREP_SEND_METRICS: 'off' },
@@ -396,6 +487,7 @@ export class SemgrepAdapter implements EngineAdapter {
         evidence: ctx.config.redact ? '' : String(extra.lines ?? '').trim(),
       });
     });
+
     return { findings, artifacts: { json: jsonPath, sarif: fs.existsSync(sarifPath) ? sarifPath : undefined } };
   }
 }
@@ -405,44 +497,65 @@ export class GitleaksAdapter implements EngineAdapter {
   displayName = 'Gitleaks';
   installHint = 'Auto-install gitleaks into MergeSafe tools cache or install gitleaks manually.';
   private resolvedBinary?: string;
+
   private async resolveBinary() {
     if (this.resolvedBinary && fs.existsSync(this.resolvedBinary)) return this.resolvedBinary;
-    this.resolvedBinary = existingBinary('gitleaks', 'MERGESAFE_GITLEAKS_VERSION', 'latest', 'gitleaks') || await resolvePathBinary('gitleaks');
+    this.resolvedBinary =
+      existingBinary('gitleaks', 'MERGESAFE_GITLEAKS_VERSION', 'latest', 'gitleaks') ||
+      (await resolvePathBinary('gitleaks'));
     return this.resolvedBinary;
   }
+
   async ensureAvailable() {
-    this.resolvedBinary = await ensureGithubReleaseBinary({ tool: 'gitleaks', owner: 'gitleaks', repo: 'gitleaks', versionEnv: 'MERGESAFE_GITLEAKS_VERSION', defaultVersion: 'latest', executableName: 'gitleaks' });
+    this.resolvedBinary = await ensureGithubReleaseBinary({
+      tool: 'gitleaks',
+      owner: 'gitleaks',
+      repo: 'gitleaks',
+      versionEnv: 'MERGESAFE_GITLEAKS_VERSION',
+      defaultVersion: 'latest',
+      executableName: 'gitleaks',
+    });
   }
+
   async version() {
     const bin = await this.resolveBinary();
     if (!bin) return 'unavailable';
     const { stdout } = await execFileAllowFailure(bin, ['version']);
     return stdout.trim() || 'unknown';
   }
+
   async isAvailable() { return Boolean(await this.resolveBinary()); }
+
   async run(ctx: EngineContext): Promise<EngineRunResult> {
     const bin = await this.resolveBinary();
     if (!bin) throw new Error(`Not installed. ${this.installHint}`);
+
     const base = engineArtifactBase(ctx, this.engineId);
     const jsonPath = path.join(base, 'results.json');
     const sarifPath = path.join(base, 'results.sarif');
+
     await execFileAllowFailure(bin, ['detect', '--source', ctx.scanPath, '--redact', '--report-format', 'json', '--report-path', jsonPath]);
     await execFileAllowFailure(bin, ['detect', '--source', ctx.scanPath, '--redact', '--report-format', 'sarif', '--report-path', sarifPath]);
+
     if (!fs.existsSync(jsonPath)) return { findings: [], artifacts: { sarif: fs.existsSync(sarifPath) ? sarifPath : undefined } };
+
     const parsed = JSON.parse(fs.readFileSync(jsonPath, 'utf8')) as Array<Record<string, any>>;
-    const findings = parsed.map((item) => canonicalFinding({
-      engineId: this.engineId,
-      engineRuleId: String(item.RuleID ?? item.rule ?? 'gitleaks.secret'),
-      engineSeverity: 'high',
-      message: String(item.Description ?? item.description ?? 'Potential secret detected'),
-      title: String(item.Description ?? item.description ?? 'Potential secret detected'),
-      filePath: path.resolve(ctx.scanPath, String(item.File ?? item.file ?? 'unknown')),
-      line: Number(item.StartLine ?? item.startLine ?? 1),
-      evidence: '',
-      confidence: 'high',
-      category: 'secrets',
-      remediation: 'Rotate exposed credentials and remove secrets from source history.',
-    }));
+    const findings = parsed.map((item) =>
+      canonicalFinding({
+        engineId: this.engineId,
+        engineRuleId: String(item.RuleID ?? item.rule ?? 'gitleaks.secret'),
+        engineSeverity: 'high',
+        message: String(item.Description ?? item.description ?? 'Potential secret detected'),
+        title: String(item.Description ?? item.description ?? 'Potential secret detected'),
+        filePath: path.resolve(ctx.scanPath, String(item.File ?? item.file ?? 'unknown')),
+        line: Number(item.StartLine ?? item.startLine ?? 1),
+        evidence: '',
+        confidence: 'high',
+        category: 'secrets',
+        remediation: 'Rotate exposed credentials and remove secrets from source history.',
+      })
+    );
+
     return { findings, artifacts: { json: jsonPath, sarif: fs.existsSync(sarifPath) ? sarifPath : undefined } };
   }
 }
@@ -452,44 +565,56 @@ export class CiscoMcpAdapter implements EngineAdapter {
   displayName = 'Cisco mcp-scanner (offline mode)';
   installHint = 'Auto-install mcp-scanner into MergeSafe tools cache or install mcp-scanner manually.';
   private resolvedBinary?: string;
+
   private async resolveBinary() {
     if (this.resolvedBinary && fs.existsSync(this.resolvedBinary)) return this.resolvedBinary;
     this.resolvedBinary = ciscoExecutable(path.join(getToolsDir(), 'venvs', 'cisco-mcp-scanner'));
     if (!fs.existsSync(this.resolvedBinary)) this.resolvedBinary = await resolvePathBinary('mcp-scanner');
     return this.resolvedBinary;
   }
+
   async ensureAvailable() { this.resolvedBinary = await ensureCiscoBinary(); }
+
   async version() {
     const bin = await this.resolveBinary();
     if (!bin) return 'unavailable';
     const { stdout, stderr } = await execFileAllowFailure(bin, ['--version']);
     return (stdout || stderr).trim() || 'unknown';
   }
+
   async isAvailable() { return Boolean(await this.resolveBinary()); }
+
   async run(ctx: EngineContext): Promise<EngineRunResult> {
     const bin = await this.resolveBinary();
     if (!bin) throw new Error(`Not installed. ${this.installHint}`);
+
     const base = engineArtifactBase(ctx, this.engineId);
     const jsonPath = path.join(base, 'results.json');
+
     const cmd = ['scan', '--path', ctx.scanPath, '--output', jsonPath, '--format', 'json', '--offline'];
     const alt = ['scan', ctx.scanPath, '--output', jsonPath, '--offline'];
+
     let res = await execFileAllowFailure(bin, cmd, { maxBuffer: 30 * 1024 * 1024, env: { ...process.env, MCP_SCANNER_OFFLINE: '1' } });
     if (res.code !== 0 && !fs.existsSync(jsonPath)) {
       res = await execFileAllowFailure(bin, alt, { maxBuffer: 30 * 1024 * 1024, env: { ...process.env, MCP_SCANNER_OFFLINE: '1' } });
     }
     if (!fs.existsSync(jsonPath)) throw new Error(`Cisco scan failed: ${(res.stderr || res.stdout).trim() || 'unknown error'}`);
+
     const raw = JSON.parse(fs.readFileSync(jsonPath, 'utf8')) as any;
     const issues = Array.isArray(raw) ? raw : (raw.findings ?? raw.issues ?? []);
-    const findings: Finding[] = (issues as any[]).map((item: any) => canonicalFinding({
-      engineId: this.engineId,
-      engineRuleId: String(item.rule_id ?? item.ruleId ?? item.id ?? 'cisco.mcp'),
-      engineSeverity: String(item.severity ?? 'medium'),
-      message: String(item.message ?? item.title ?? 'Cisco MCP finding'),
-      title: String(item.title ?? item.message ?? 'Cisco MCP finding'),
-      filePath: path.resolve(ctx.scanPath, String(item.file ?? item.path ?? 'unknown')),
-      line: Number(item.line ?? item.start_line ?? 1),
-      evidence: ctx.config.redact ? '' : String(item.snippet ?? ''),
-    }));
+    const findings: Finding[] = (issues as any[]).map((item: any) =>
+      canonicalFinding({
+        engineId: this.engineId,
+        engineRuleId: String(item.rule_id ?? item.ruleId ?? item.id ?? 'cisco.mcp'),
+        engineSeverity: String(item.severity ?? 'medium'),
+        message: String(item.message ?? item.title ?? 'Cisco MCP finding'),
+        title: String(item.title ?? item.message ?? 'Cisco MCP finding'),
+        filePath: path.resolve(ctx.scanPath, String(item.file ?? item.path ?? 'unknown')),
+        line: Number(item.line ?? item.start_line ?? 1),
+        evidence: ctx.config.redact ? '' : String(item.snippet ?? ''),
+      })
+    );
+
     return { findings, artifacts: { json: jsonPath } };
   }
 }
@@ -499,45 +624,66 @@ export class OsvScannerAdapter implements EngineAdapter {
   displayName = 'OSV-Scanner';
   installHint = 'Auto-install osv-scanner into MergeSafe tools cache or install osv-scanner manually.';
   private resolvedBinary?: string;
+
   private async resolveBinary() {
     if (this.resolvedBinary && fs.existsSync(this.resolvedBinary)) return this.resolvedBinary;
-    this.resolvedBinary = existingBinary('osv-scanner', 'MERGESAFE_OSV_VERSION', 'latest', 'osv-scanner') || await resolvePathBinary('osv-scanner');
+    this.resolvedBinary =
+      existingBinary('osv-scanner', 'MERGESAFE_OSV_VERSION', 'latest', 'osv-scanner') ||
+      (await resolvePathBinary('osv-scanner'));
     return this.resolvedBinary;
   }
+
   async ensureAvailable() {
-    this.resolvedBinary = await ensureGithubReleaseBinary({ tool: 'osv-scanner', owner: 'google', repo: 'osv-scanner', versionEnv: 'MERGESAFE_OSV_VERSION', defaultVersion: 'latest', executableName: 'osv-scanner' });
+    this.resolvedBinary = await ensureGithubReleaseBinary({
+      tool: 'osv-scanner',
+      owner: 'google',
+      repo: 'osv-scanner',
+      versionEnv: 'MERGESAFE_OSV_VERSION',
+      defaultVersion: 'latest',
+      executableName: 'osv-scanner',
+    });
   }
+
   async version() {
     const bin = await this.resolveBinary();
     if (!bin) return 'unavailable';
     const { stdout } = await execFileAllowFailure(bin, ['--version']);
     return stdout.trim() || 'unknown';
   }
+
   async isAvailable() { return Boolean(await this.resolveBinary()); }
+
   async run(ctx: EngineContext): Promise<EngineRunResult> {
     const bin = await this.resolveBinary();
     if (!bin) throw new Error(`Not installed. ${this.installHint}`);
+
     const base = engineArtifactBase(ctx, this.engineId);
     const jsonPath = path.join(base, 'results.json');
     const sarifPath = path.join(base, 'results.sarif');
+
     await execFileAllowFailure(bin, ['scan', 'source', '-r', ctx.scanPath, '--format', 'json', '--output', jsonPath]);
     await execFileAllowFailure(bin, ['scan', 'source', '-r', ctx.scanPath, '--format', 'sarif', '--output', sarifPath]);
+
     if (!fs.existsSync(jsonPath)) return { findings: [], artifacts: { sarif: fs.existsSync(sarifPath) ? sarifPath : undefined } };
+
     const raw = JSON.parse(fs.readFileSync(jsonPath, 'utf8')) as any;
     const vulns = (raw.results ?? []).flatMap((entry: any) => entry.packages?.flatMap((p: any) => p.vulnerabilities ?? []) ?? entry.vulnerabilities ?? []);
-    const findings: Finding[] = (vulns as any[]).map((v: any) => canonicalFinding({
-      engineId: this.engineId,
-      engineRuleId: String(v.id ?? 'OSV'),
-      engineSeverity: 'high',
-      message: String(v.summary ?? v.details ?? 'Vulnerable dependency'),
-      title: `Dependency vulnerability ${String(v.id ?? '')}`.trim(),
-      filePath: path.resolve(ctx.scanPath, String(v.database_specific?.source ?? 'dependencies')),
-      line: 1,
-      evidence: '',
-      confidence: 'high',
-      category: 'dependencies',
-      remediation: 'Update vulnerable dependency to a fixed version.',
-    }));
+    const findings: Finding[] = (vulns as any[]).map((v: any) =>
+      canonicalFinding({
+        engineId: this.engineId,
+        engineRuleId: String(v.id ?? 'OSV'),
+        engineSeverity: 'high',
+        message: String(v.summary ?? v.details ?? 'Vulnerable dependency'),
+        title: `Dependency vulnerability ${String(v.id ?? '')}`.trim(),
+        filePath: path.resolve(ctx.scanPath, String(v.database_specific?.source ?? 'dependencies')),
+        line: 1,
+        evidence: '',
+        confidence: 'high',
+        category: 'dependencies',
+        remediation: 'Update vulnerable dependency to a fixed version.',
+      })
+    );
+
     return { findings, artifacts: { json: jsonPath, sarif: fs.existsSync(sarifPath) ? sarifPath : undefined } };
   }
 }
@@ -547,29 +693,46 @@ export class TrivyAdapter implements EngineAdapter {
   displayName = 'Trivy';
   installHint = 'Auto-install trivy into MergeSafe tools cache or install trivy manually.';
   private resolvedBinary?: string;
+
   private async resolveBinary() {
     if (this.resolvedBinary && fs.existsSync(this.resolvedBinary)) return this.resolvedBinary;
-    this.resolvedBinary = existingBinary('trivy', 'MERGESAFE_TRIVY_VERSION', 'latest', 'trivy') || await resolvePathBinary('trivy');
+    this.resolvedBinary =
+      existingBinary('trivy', 'MERGESAFE_TRIVY_VERSION', 'latest', 'trivy') ||
+      (await resolvePathBinary('trivy'));
     return this.resolvedBinary;
   }
+
   async ensureAvailable() {
-    this.resolvedBinary = await ensureGithubReleaseBinary({ tool: 'trivy', owner: 'aquasecurity', repo: 'trivy', versionEnv: 'MERGESAFE_TRIVY_VERSION', defaultVersion: 'latest', executableName: 'trivy' });
+    this.resolvedBinary = await ensureGithubReleaseBinary({
+      tool: 'trivy',
+      owner: 'aquasecurity',
+      repo: 'trivy',
+      versionEnv: 'MERGESAFE_TRIVY_VERSION',
+      defaultVersion: 'latest',
+      executableName: 'trivy',
+    });
   }
+
   async version() {
     const bin = await this.resolveBinary();
     if (!bin) return 'unavailable';
     const { stdout } = await execFileAllowFailure(bin, ['--version']);
     return stdout.split('\n')[0]?.trim() || 'unknown';
   }
+
   async isAvailable() { return Boolean(await this.resolveBinary()); }
+
   async run(ctx: EngineContext): Promise<EngineRunResult> {
     const bin = await this.resolveBinary();
     if (!bin) throw new Error(`Not installed. ${this.installHint}`);
+
     const base = engineArtifactBase(ctx, this.engineId);
     const jsonPath = path.join(base, 'results.json');
     const sarifPath = path.join(base, 'results.sarif');
+
     await execFileAllowFailure(bin, ['fs', '--format', 'json', '--output', jsonPath, ctx.scanPath]);
     await execFileAllowFailure(bin, ['fs', '--format', 'sarif', '--output', sarifPath, ctx.scanPath]);
+
     return { findings: [], artifacts: { json: fs.existsSync(jsonPath) ? jsonPath : undefined, sarif: fs.existsSync(sarifPath) ? sarifPath : undefined } };
   }
 }
@@ -584,19 +747,21 @@ export const defaultAdapters: EngineAdapter[] = [
 ];
 
 export async function listEngines(ctx: EngineContext, adapters: EngineAdapter[] = defaultAdapters) {
-  return Promise.all(adapters.map(async (adapter) => ({
-    engineId: adapter.engineId,
-    displayName: adapter.displayName,
-    available: await adapter.isAvailable(ctx),
-    version: await adapter.version(),
-    installHint: adapter.installHint,
-  })));
+  return Promise.all(
+    adapters.map(async (adapter) => ({
+      engineId: adapter.engineId,
+      displayName: adapter.displayName,
+      available: await adapter.isAvailable(ctx),
+      version: await adapter.version(),
+      installHint: adapter.installHint,
+    }))
+  );
 }
 
 export async function runEngines(
   ctx: EngineContext,
   selectedEngines: string[],
-  adapters: EngineAdapter[] = defaultAdapters,
+  adapters: EngineAdapter[] = defaultAdapters
 ): Promise<{ findings: Finding[]; meta: EngineExecutionMeta[] }> {
   const selected = adapters.filter((adapter) => selectedEngines.includes(adapter.engineId));
   const findings: Finding[] = [];
