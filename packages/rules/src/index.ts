@@ -3,18 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import type { RawFinding } from "@mergesafe/core";
 import { scanJsTaint } from "./js_taint.js";
+import { emitToolsManifestFindings, type ToolSurface } from "./tools_manifest.js";
 
 interface FileInfo {
   filePath: string;
   content: string;
   lines: string[];
-}
-
-export interface ToolSurface {
-  name: string;
-  hints: string[];
-  capabilities: string[];
-  filePath: string;
 }
 
 const FILE_EXTS = [
@@ -32,18 +26,102 @@ const FILE_EXTS = [
 
 const JS_EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
 
+/**
+ * Directory ignore policy (performance + noise).
+ * Keep this conservative: skip the obvious huge / generated folders.
+ */
+const IGNORE_DIR_NAMES = new Set([
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  "out",
+  ".next",
+  "coverage",
+  ".cache",
+  ".turbo",
+  ".pnpm",
+  ".yarn",
+  ".npm",
+  ".venv",
+  "venv",
+  "__pycache__",
+  ".pytest_cache",
+]);
+
+/**
+ * Tools manifest filenames we treat as policy inputs.
+ * We SKIP these in the generic heuristic scan loop to avoid noisy false positives.
+ * (The manifest is handled by emitToolsManifestFindings as the single source of truth.)
+ */
+const TOOLS_MANIFEST_BASENAMES = new Set([
+  "tools-list.json",
+  "tool-list.json",
+  "tools.json",
+  "mcp-tools.json",
+  "mcp.tools.json",
+  "tools.manifest.json",
+]);
+
+function isToolsManifestFile(filePath: string): boolean {
+  const base = path.basename(filePath).toLowerCase();
+  return TOOLS_MANIFEST_BASENAMES.has(base);
+}
+
+function shouldSkipDir(dirPath: string): boolean {
+  const base = path.basename(dirPath);
+  if (IGNORE_DIR_NAMES.has(base)) return true;
+
+  if (base.startsWith(".") && base !== "." && base !== "..") {
+    if (base === ".github" || base === ".vscode") return false;
+    return true;
+  }
+
+  return false;
+}
+
+function readTextSafe(p: string): string {
+  try {
+    return fs.readFileSync(p, "utf8");
+  } catch {
+    return "";
+  }
+}
+
 function collectFiles(targetPath: string): FileInfo[] {
   const out: FileInfo[] = [];
+
   const walk = (p: string) => {
-    const st = fs.statSync(p);
-    if (st.isDirectory()) {
-      for (const child of fs.readdirSync(p)) walk(path.join(p, child));
+    let st: fs.Stats;
+    try {
+      st = fs.statSync(p);
+    } catch {
       return;
     }
-    if (!FILE_EXTS.includes(path.extname(p))) return;
-    const content = fs.readFileSync(p, "utf8");
+
+    if (st.isDirectory()) {
+      if (shouldSkipDir(p)) return;
+
+      let children: string[] = [];
+      try {
+        children = fs.readdirSync(p);
+      } catch {
+        return;
+      }
+
+      for (const child of children) {
+        walk(path.join(p, child));
+      }
+      return;
+    }
+
+    const ext = path.extname(p).toLowerCase();
+    if (!FILE_EXTS.includes(ext)) return;
+
+    const content = readTextSafe(p);
     out.push({ filePath: p, content, lines: content.split(/\r?\n/) });
   };
+
   walk(targetPath);
   return out;
 }
@@ -139,29 +217,25 @@ function hasUserInputSource(c: string): boolean {
   );
 }
 
-// Command-exec sinks (Node + Python)
 const EXEC_SINK_RE =
   /\b(execSync|exec|spawnSync|spawn|fork)\s*\(|\bchild_process\b|\bsubprocess\.Popen\b/i;
 
-// High-confidence “user-controlled arg hits sink” (simple, line-ish)
 const EXEC_TAINT_CALL_RE =
   /\b(execSync|exec|spawnSync|spawn|fork)\s*\(\s*(q|query|params|body|req|request)\b/i;
 
-// FS write sinks
 const FS_WRITE_SINK_RE =
   /\bfs\.writeFileSync\b|\bfs\.writeFile\b|\bfs\.appendFile\b|\bcreateWriteStream\b|\bopen\s*\(.*\bw\b/i;
 
-// Common “user-ish” inputs
 const GENERIC_USER_INPUT_RE =
   /\b(req\.|request\.|input\b|body\b|argv\b|params\b|query\b)\b/i;
+
+/* ------------------------- existing code tool surface ------------------------- */
 
 export function extractToolSurface(files: FileInfo[]): ToolSurface[] {
   const tools: ToolSurface[] = [];
   for (const file of files) {
     const nameMatch =
-      file.content.match(
-        /tool\s*[:=]\s*['"]([\w.-]+)['"]|registerTool\(['"]([\w.-]+)['"]/g
-      ) || [];
+      file.content.match(/tool\s*[:=]\s*['"]([\w.-]+)['"]|registerTool\(['"]([\w.-]+)['"]/g) || [];
     for (const raw of nameMatch) {
       const name = raw.match(/['"]([\w.-]+)['"]/)?.[1] ?? "unknown";
       const hints: string[] = [];
@@ -182,24 +256,49 @@ export function extractToolSurface(files: FileInfo[]): ToolSurface[] {
   return tools;
 }
 
+function dedupeKeyForFinding(f: RawFinding): string {
+  // NOTE: manifest findings often land on line=1. Including evidence/tags reduces accidental collapsing.
+  const ev = (f.evidence ?? "").trim().slice(0, 160);
+  const tags = Array.isArray((f as any).tags) ? String((f as any).tags.join(",")) : "";
+  return `${f.ruleId}|${f.filePath}|${f.line}|${f.title}|${ev}|${tags}`;
+}
+
 export function runDeterministicRules(
   targetPath: string,
   mode: "fast" | "deep" = "fast"
 ): { findings: RawFinding[]; tools: ToolSurface[] } {
   const files = collectFiles(targetPath);
-  const tools = extractToolSurface(files);
-  const findings: RawFinding[] = [];
 
-  // Avoid duplicates if both AST + regex ever overlap
+  const findings: RawFinding[] = [];
   const dedupe = new Set<string>();
   const pushFinding = (f: RawFinding) => {
-    const key = `${f.ruleId}|${f.filePath}|${f.line}|${f.title}`;
+    const key = dedupeKeyForFinding(f);
     if (dedupe.has(key)) return;
     dedupe.add(key);
     findings.push(f);
   };
 
+  // 1) Tools manifest policy checks (imported, single source of truth)
+  const manifestTools = emitToolsManifestFindings(targetPath, pushFinding);
+
+  // 2) Existing code-surface tool extraction
+  const codeTools = extractToolSurface(files);
+
+  // Merge tool surfaces (manifest + code), dedupe by name+file
+  const toolSeen = new Set<string>();
+  const tools: ToolSurface[] = [];
+  for (const t of [...manifestTools, ...codeTools]) {
+    const key = `${t.filePath}|${t.name}`;
+    if (toolSeen.has(key)) continue;
+    toolSeen.add(key);
+    tools.push(t);
+  }
+
   for (const file of files) {
+    // Skip manifest files in the generic heuristic scan loop to avoid noise/false positives.
+    // (They are handled deterministically by emitToolsManifestFindings.)
+    if (isToolsManifestFile(file.filePath)) continue;
+
     const c = file.content;
     const ext = path.extname(file.filePath).toLowerCase();
     const isJs = JS_EXTS.has(ext);
@@ -216,8 +315,7 @@ export function runDeterministicRules(
           "high",
           file,
           /destructive|delete|rm\s+-rf/i,
-          firstLineMatch(c, /.*(delete|rm\s+-rf|drop\s+table).*/i) ||
-            "destructive pattern",
+          firstLineMatch(c, /.*(delete|rm\s+-rf|drop\s+table).*/i) || "destructive pattern",
           "Require explicit authorization/gating hints.",
           ["destructive", "gating"],
           "tooling",
@@ -226,19 +324,12 @@ export function runDeterministicRules(
       );
     }
 
-    /* ------------------------------------------------------------------
-       MS002 / MS003
-       - JS/TS: AST taint (new PR A behavior)
-       - Non-JS: keep cheap heuristics (preserve Python coverage)
-    ------------------------------------------------------------------- */
-
     if (isJs) {
       const taintFindings = scanJsTaint(file.content, file.filePath);
       for (const tf of taintFindings) {
         if (tf.ruleId === "MS002") {
           const evidenceLine =
-            file.lines[tf.line - 1]?.trim() ||
-            `${tf.sink}(... tainted arg #${tf.taintedArgIndex})`;
+            file.lines[tf.line - 1]?.trim() || `${tf.sink}(... tainted arg #${tf.taintedArgIndex})`;
           pushFinding(
             mkLoc(
               "MS002",
@@ -255,8 +346,7 @@ export function runDeterministicRules(
           );
         } else if (tf.ruleId === "MS003") {
           const evidenceLine =
-            file.lines[tf.line - 1]?.trim() ||
-            `${tf.sink}(... tainted arg #${tf.taintedArgIndex})`;
+            file.lines[tf.line - 1]?.trim() || `${tf.sink}(... tainted arg #${tf.taintedArgIndex})`;
           pushFinding(
             mkLoc(
               "MS003",
@@ -274,7 +364,6 @@ export function runDeterministicRules(
         }
       }
     } else {
-      // Heuristic MS002 (non-JS only)
       if (EXEC_SINK_RE.test(c)) {
         const httpCtx = hasHttpHandlerContext(c);
         const userInput = hasUserInputSource(c);
@@ -299,7 +388,6 @@ export function runDeterministicRules(
         }
       }
 
-      // Heuristic MS003 (non-JS only)
       if (FS_WRITE_SINK_RE.test(c) && GENERIC_USER_INPUT_RE.test(c)) {
         pushFinding(
           mk(
@@ -402,11 +490,7 @@ export function runDeterministicRules(
     }
 
     // MS008
-    if (
-      /(debug\s*=\s*true|ALLOW_ALL\s*=\s*true|CORS\(\{\s*origin:\s*['"]\*['"])/i.test(
-        c
-      )
-    ) {
+    if (/(debug\s*=\s*true|ALLOW_ALL\s*=\s*true|CORS\(\{\s*origin:\s*['"]\*['"])/i.test(c)) {
       pushFinding(
         mk(
           "MS008",
@@ -460,10 +544,7 @@ export function runDeterministicRules(
     }
 
     // MS011 (deep)
-    if (
-      mode === "deep" &&
-      /(eval\(|Function\(|exec\(req\.|subprocess\.Popen\(request)/.test(c)
-    ) {
+    if (mode === "deep" && /(eval\(|Function\(|exec\(req\.|subprocess\.Popen\(request)/.test(c)) {
       pushFinding(
         mk(
           "MS011",

@@ -11,23 +11,99 @@ import { mergeSarifRuns } from '@mergesafe/sarif';
 const DEFAULT_FORMATS = ['json', 'html', 'sarif', 'md'] as const;
 const ALLOWED_FORMATS = new Set(DEFAULT_FORMATS);
 
-type ParsedArgs = { scanPath?: string; opts: Record<string, string | boolean>; command: 'scan' | 'list-engines' };
+type CiscoMode = 'auto' | 'static' | 'known-configs' | 'config' | 'remote' | 'stdio';
+
+type CiscoCliConfig = {
+  enabled: boolean;
+  mode: CiscoMode;
+
+  // static
+  toolsPath?: string;
+
+  // config/remote/stdio
+  configPath?: string;
+  serverUrl?: string;
+  stdioCommand?: string;
+  stdioArgs?: string[];
+
+  // auth
+  bearerToken?: string;
+  headers?: string[];
+
+  // analyzers (default yara for offline)
+  analyzers?: string;
+};
+
+export type CliConfigExt = CliConfig & {
+  cisco?: CiscoCliConfig;
+};
+
+type OptValue = string | boolean | string[];
+type ParsedArgs = { scanPath?: string; opts: Record<string, OptValue>; command: 'scan' | 'list-engines' };
+
+const BOOLEAN_FLAGS = new Set([
+  'list-engines',
+  'redact',
+  'no-auto-install',
+  'help',
+  'no-cisco',
+]);
+
+const REPEATABLE_FLAGS = new Set([
+  'cisco-header',
+  'cisco-stdio-arg',
+]);
+
+function pushOpt(opts: Record<string, OptValue>, key: string, value: string) {
+  const cur = opts[key];
+  if (cur === undefined) {
+    opts[key] = value;
+    return;
+  }
+  if (Array.isArray(cur)) {
+    cur.push(value);
+    opts[key] = cur;
+    return;
+  }
+  // convert existing single value to array
+  opts[key] = [String(cur), value];
+}
 
 function parseArgs(argv: string[]): ParsedArgs {
   const normalized = argv[0] === '--' ? argv.slice(1) : argv;
 
+  // Support legacy: mergesafe --list-engines
   if (normalized.includes('--list-engines')) {
-    const opts: Record<string, string | boolean> = {};
+    const opts: Record<string, OptValue> = {};
     for (let i = 0; i < normalized.length; i++) {
       const token = normalized[i];
       if (!token.startsWith('--')) continue;
-      const key = token.slice(2);
-      if (key === 'list-engines' || key === 'redact' || key === 'no-auto-install') {
-        opts[key] = true;
+
+      // support --key=value
+      const eqIdx = token.indexOf('=');
+      const key = (eqIdx >= 0 ? token.slice(2, eqIdx) : token.slice(2)).trim();
+      const valueInline = eqIdx >= 0 ? token.slice(eqIdx + 1) : undefined;
+
+      if (BOOLEAN_FLAGS.has(key)) {
+        // if user wrote --flag=false, treat it as a value
+        if (valueInline !== undefined) {
+          opts[key] = valueInline;
+        } else {
+          opts[key] = true;
+        }
         continue;
       }
-      opts[key] = normalized[i + 1];
-      i += 1;
+
+      if (REPEATABLE_FLAGS.has(key)) {
+        const val = valueInline ?? normalized[i + 1];
+        if (typeof val === 'string' && val.length) pushOpt(opts, key, val);
+        if (valueInline === undefined) i += 1;
+        continue;
+      }
+
+      const val = valueInline ?? normalized[i + 1];
+      opts[key] = val;
+      if (valueInline === undefined) i += 1;
     }
     return { command: 'list-engines', opts };
   }
@@ -35,27 +111,45 @@ function parseArgs(argv: string[]): ParsedArgs {
   const [command, scanPath, ...rest] = normalized;
   if (command !== 'scan' || !scanPath) throw new Error('Usage: mergesafe scan <path> [options]');
 
-  const opts: Record<string, string | boolean> = {};
+  const opts: Record<string, OptValue> = {};
   for (let i = 0; i < rest.length; i++) {
     const token = rest[i];
     if (!token.startsWith('--')) continue;
-    const key = token.slice(2);
-    if (key === 'redact' || key === 'no-auto-install') {
-      opts[key] = true;
+
+    // support --key=value
+    const eqIdx = token.indexOf('=');
+    const key = (eqIdx >= 0 ? token.slice(2, eqIdx) : token.slice(2)).trim();
+    const valueInline = eqIdx >= 0 ? token.slice(eqIdx + 1) : undefined;
+
+    if (BOOLEAN_FLAGS.has(key)) {
+      if (valueInline !== undefined) {
+        opts[key] = valueInline;
+      } else {
+        opts[key] = true;
+      }
       continue;
     }
-    opts[key] = rest[i + 1];
-    i++;
+
+    if (REPEATABLE_FLAGS.has(key)) {
+      const val = valueInline ?? rest[i + 1];
+      if (typeof val === 'string' && val.length) pushOpt(opts, key, val);
+      if (valueInline === undefined) i += 1;
+      continue;
+    }
+
+    const val = valueInline ?? rest[i + 1];
+    opts[key] = val;
+    if (valueInline === undefined) i += 1;
   }
 
   return { command: 'scan', scanPath, opts };
 }
 
-function loadConfig(configPath?: string): Partial<CliConfig> {
+function loadConfig(configPath?: string): Partial<CliConfigExt> {
   const candidate = configPath ?? (fs.existsSync('mergesafe.yml') ? 'mergesafe.yml' : undefined);
   if (!candidate || !fs.existsSync(candidate)) return {};
   const data = YAML.parse(fs.readFileSync(candidate, 'utf8'));
-  return data ?? {};
+  return (data ?? {}) as Partial<CliConfigExt>;
 }
 
 export function normalizeOutDir(
@@ -78,7 +172,6 @@ export function parseListOpt(value: string | string[] | undefined, defaults: str
   return deduped.length ? deduped : defaults;
 }
 
-
 function parseBooleanOpt(value: string | boolean | undefined, defaultValue: boolean): boolean {
   if (typeof value === 'boolean') return value;
   if (typeof value !== 'string') return defaultValue;
@@ -88,13 +181,84 @@ function parseBooleanOpt(value: string | boolean | undefined, defaultValue: bool
   return defaultValue;
 }
 
-export function resolveConfig(opts: Record<string, string | boolean>): CliConfig {
+function parseCiscoMode(raw: unknown, fallback: CiscoMode): CiscoMode {
+  if (typeof raw !== 'string') return fallback;
+  const v = raw.trim().toLowerCase();
+  const allowed: CiscoMode[] = ['auto', 'static', 'known-configs', 'config', 'remote', 'stdio'];
+  return (allowed.includes(v as CiscoMode) ? (v as CiscoMode) : fallback);
+}
+
+export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
   const cfg = loadConfig(opts.config as string | undefined);
+
   const parsedFormats = parseListOpt(
     (opts.format as string | undefined) ?? (cfg.format as string | string[] | undefined),
     [...DEFAULT_FORMATS]
   );
   const format = parsedFormats.filter((entry) => ALLOWED_FORMATS.has(entry as (typeof DEFAULT_FORMATS)[number]));
+
+  // Engines list (default includes cisco unless user disables)
+  const defaultEngines = ['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv'];
+  const enginesFromArgs = (opts.engines as string | undefined);
+  const enginesFromCfg = (cfg.engines as string | string[] | undefined);
+
+  let engines = parseListOpt(enginesFromArgs ?? enginesFromCfg, defaultEngines);
+
+  // --no-cisco force removal
+  const noCisco = parseBooleanOpt(opts['no-cisco'] as any, false);
+  if (noCisco) engines = engines.filter((e) => e !== 'cisco');
+
+  // Cisco settings (only meaningful if engine is selected)
+  const ciscoEnabled = engines.includes('cisco');
+
+  const ciscoToolsPath =
+    (opts['cisco-tools'] as string | undefined) ??
+    (cfg.cisco?.toolsPath as string | undefined);
+
+  const ciscoMode = parseCiscoMode(
+    (opts['cisco-mode'] as string | undefined) ?? (cfg.cisco?.mode as string | undefined),
+    'auto'
+  );
+
+  const ciscoHeadersRaw =
+    (opts['cisco-header'] as string | string[] | undefined) ??
+    (cfg.cisco?.headers as unknown as string | string[] | undefined);
+
+  const ciscoStdioArgsRaw =
+    (opts['cisco-stdio-arg'] as string | string[] | undefined) ??
+    (cfg.cisco?.stdioArgs as unknown as string | string[] | undefined);
+
+  const ciscoConfig: CiscoCliConfig = {
+    enabled: ciscoEnabled,
+    mode: ciscoMode,
+
+    toolsPath: ciscoToolsPath,
+
+    configPath:
+      (opts['cisco-config-path'] as string | undefined) ??
+      (cfg.cisco?.configPath as string | undefined),
+
+    serverUrl:
+      (opts['cisco-server-url'] as string | undefined) ??
+      (cfg.cisco?.serverUrl as string | undefined),
+
+    stdioCommand:
+      (opts['cisco-stdio-command'] as string | undefined) ??
+      (cfg.cisco?.stdioCommand as string | undefined),
+
+    stdioArgs: parseListOpt(ciscoStdioArgsRaw, []),
+
+    bearerToken:
+      (opts['cisco-bearer-token'] as string | undefined) ??
+      (cfg.cisco?.bearerToken as string | undefined),
+
+    headers: parseListOpt(ciscoHeadersRaw, []),
+
+    analyzers:
+      (opts['cisco-analyzers'] as string | undefined) ??
+      (cfg.cisco?.analyzers as string | undefined) ??
+      'yara',
+  };
 
   return {
     outDir: normalizeOutDir((opts['out-dir'] as string) ?? cfg.outDir),
@@ -106,15 +270,18 @@ export function resolveConfig(opts: Record<string, string | boolean>): CliConfig
     redact: Boolean(opts.redact ?? cfg.redact ?? false),
     autoInstall: opts['no-auto-install']
       ? false
-      : parseBooleanOpt((opts['auto-install'] as string | boolean | undefined) ?? (cfg.autoInstall as boolean | undefined), true),
-    engines: parseListOpt(
-      (opts.engines as string | undefined) ?? (cfg.engines as string | string[] | undefined),
-      ['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv']
-    ),
+      : parseBooleanOpt(
+          (opts['auto-install'] as string | boolean | undefined) ?? (cfg.autoInstall as boolean | undefined),
+          true
+        ),
+    engines,
+
+    // Extra config consumed by adapters (Step 3)
+    cisco: ciscoConfig,
   };
 }
 
-export async function runScan(scanPath: string, config: CliConfig, adapters = defaultAdapters): Promise<ScanResult> {
+export async function runScan(scanPath: string, config: CliConfigExt, adapters = defaultAdapters): Promise<ScanResult> {
   const selected = config.engines ?? ['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv'];
   const { findings, meta } = await runEngines({ scanPath, config }, selected, adapters);
   const summary = summarize(findings, config.failOn);
@@ -140,12 +307,12 @@ export async function runScan(scanPath: string, config: CliConfig, adapters = de
   };
 }
 
-export function writeOutputs(result: ScanResult, config: CliConfig) {
+export function writeOutputs(result: ScanResult, config: CliConfigExt) {
   const outDirAbs = normalizeOutDir(config.outDir);
   fs.mkdirSync(outDirAbs, { recursive: true });
 
   const wants = new Set(
-    parseListOpt(config.format, [...DEFAULT_FORMATS]).filter((entry) =>
+    parseListOpt(config.format as any, [...DEFAULT_FORMATS]).filter((entry) =>
       ALLOWED_FORMATS.has(entry as (typeof DEFAULT_FORMATS)[number])
     )
   );
@@ -156,7 +323,13 @@ export function writeOutputs(result: ScanResult, config: CliConfig) {
   if (wants.has('json')) fs.writeFileSync(path.join(outDirAbs, 'report.json'), JSON.stringify(result, null, 2));
   if (wants.has('md')) fs.writeFileSync(path.join(outDirAbs, 'summary.md'), generateSummaryMarkdown(result));
   if (wants.has('html')) fs.writeFileSync(path.join(outDirAbs, 'report.html'), generateHtmlReport(result));
-  if (wants.has('sarif')) mergeSarifRuns({ outDir: outDirAbs, enginesMeta: result.meta.engines ?? [], canonicalFindings: result.findings, redact: result.meta.redacted });
+  if (wants.has('sarif'))
+    mergeSarifRuns({
+      outDir: outDirAbs,
+      enginesMeta: result.meta.engines ?? [],
+      canonicalFindings: result.findings,
+      redact: result.meta.redacted,
+    });
 
   return outDirAbs;
 }

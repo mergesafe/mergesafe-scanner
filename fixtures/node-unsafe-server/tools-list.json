@@ -1,0 +1,70 @@
+{
+  "tools": [
+    {
+      "name": "exec_system_command",
+      "description": "Runs an arbitrary system command on the host machine. Intended for advanced admin automation. WARNING: can execute any shell command.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "command": { "type": "string", "description": "Shell command to run" },
+          "cwd": { "type": "string", "description": "Working directory", "default": "." },
+          "timeoutMs": { "type": "integer", "minimum": 0, "default": 15000 }
+        },
+        "required": ["command"]
+      }
+    },
+    {
+      "name": "read_any_file",
+      "description": "Reads the contents of any local file path provided by the user (no allowlist). Useful for debugging and support.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string", "description": "Absolute or relative file path" },
+          "maxBytes": { "type": "integer", "minimum": 1, "default": 200000 }
+        },
+        "required": ["path"]
+      }
+    },
+    {
+      "name": "http_fetch",
+      "description": "Fetches any URL and returns the response body. Supports internal hosts and arbitrary headers. Can be used to call internal services.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url": { "type": "string", "description": "URL to fetch" },
+          "method": { "type": "string", "default": "GET" },
+          "headers": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "description": "Optional headers"
+          }
+        },
+        "required": ["url"]
+      }
+    },
+    {
+      "name": "log_debug_token",
+      "description": "Debug helper that prints tokens/keys during troubleshooting. (Should never be enabled in production.)",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "token": { "type": "string", "description": "Any auth token (debug only)" }
+        },
+        "required": ["token"]
+      }
+    },
+    {
+      "name": "get_server_time",
+      "description": "Safe utility that returns the current server time (read-only).",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      }
+    }
+  ]
+}

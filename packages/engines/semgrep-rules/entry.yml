@@ -1,0 +1,237 @@
+# MergeSafe Semgrep entrypoint (local rules)
+# Broad MCP/server risk patterns for Node/TS - offline, vendorable
+# NOTE: These are intentionally broader (more coverage, a bit more noise).
+
+rules:
+  #
+  # 1) Command execution from request/tool input
+  #
+  - id: mergesafe.mcp.command-exec.user-controlled
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Potential command execution using user-controlled input (req/args). Avoid passing external input to child_process execution APIs."
+    metadata:
+      category: injection
+      confidence: medium
+      tags: [mcp, node, command-exec, rce]
+      references:
+        - "https://nodejs.org/api/child_process.html"
+        - "https://owasp.org/www-community/attacks/Command_Injection"
+    patterns:
+      - pattern-either:
+          # direct imports
+          - pattern: exec($X, ...)
+          - pattern: execSync($X, ...)
+          - pattern: execFile($X, ...)
+          - pattern: execFileSync($X, ...)
+          - pattern: spawn($X, ...)
+          - pattern: spawnSync($X, ...)
+
+          # qualified child_process usage
+          - pattern: child_process.exec($X, ...)
+          - pattern: child_process.execSync($X, ...)
+          - pattern: child_process.execFile($X, ...)
+          - pattern: child_process.execFileSync($X, ...)
+          - pattern: child_process.spawn($X, ...)
+          - pattern: child_process.spawnSync($X, ...)
+
+          # alias like: const cp = require('child_process')
+          - pattern: $CP.exec($X, ...)
+          - pattern: $CP.execSync($X, ...)
+          - pattern: $CP.execFile($X, ...)
+          - pattern: $CP.execFileSync($X, ...)
+          - pattern: $CP.spawn($X, ...)
+          - pattern: $CP.spawnSync($X, ...)
+
+      - metavariable-pattern:
+          metavariable: $X
+          patterns:
+            - pattern-either:
+                # Express-style request
+                - pattern: req.$A
+                - pattern: req.body.$A
+                - pattern: req.query.$A
+                - pattern: req.params.$A
+                - pattern: request.$A
+                - pattern: request.body.$A
+                - pattern: request.query.$A
+                - pattern: request.params.$A
+
+                # MCP/tool-style args/input
+                - pattern: args.$A
+                - pattern: input.$A
+                - pattern: params.$A
+                - pattern: payload.$A
+                - pattern: toolArgs.$A
+                - pattern: toolInput.$A
+
+                # common “message-like” containers
+                - pattern: ctx.$A
+                - pattern: context.$A
+                - pattern: data.$A
+
+  #
+  # 2) Template-string / concat command construction from user input
+  #
+  - id: mergesafe.mcp.command-exec.template-string
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Potential command execution using interpolated user input. Template strings in commands are high risk."
+    metadata:
+      category: injection
+      confidence: medium
+      tags: [mcp, node, command-exec, rce, template-string]
+    patterns:
+      - pattern-either:
+          - pattern: exec(`...${$X}...`, ...)
+          - pattern: execSync(`...${$X}...`, ...)
+          - pattern: child_process.exec(`...${$X}...`, ...)
+          - pattern: $CP.exec(`...${$X}...`, ...)
+      - metavariable-pattern:
+          metavariable: $X
+          patterns:
+            - pattern-either:
+                - pattern: req.$A
+                - pattern: req.body.$A
+                - pattern: req.query.$A
+                - pattern: req.params.$A
+                - pattern: args.$A
+                - pattern: input.$A
+                - pattern: params.$A
+                - pattern: payload.$A
+                - pattern: toolArgs.$A
+                - pattern: toolInput.$A
+
+  #
+  # 3) Filesystem write using user-controlled path
+  #
+  - id: mergesafe.mcp.fs-write.user-path
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Potential filesystem write using user-controlled path. Constrain writes to allowlisted directories and normalize paths."
+    metadata:
+      category: filesystem
+      confidence: medium
+      tags: [mcp, node, filesystem, write, path-traversal]
+      references:
+        - "https://nodejs.org/api/fs.html"
+        - "https://owasp.org/www-community/attacks/Path_Traversal"
+    patterns:
+      - pattern-either:
+          - pattern: fs.writeFileSync($P, ...)
+          - pattern: fs.writeFile($P, ...)
+          - pattern: fs.appendFileSync($P, ...)
+          - pattern: fs.appendFile($P, ...)
+          - pattern: fs.createWriteStream($P, ...)
+      - metavariable-pattern:
+          metavariable: $P
+          patterns:
+            - pattern-either:
+                - pattern: req.$A
+                - pattern: req.body.$A
+                - pattern: req.query.$A
+                - pattern: req.params.$A
+                - pattern: args.$A
+                - pattern: input.$A
+                - pattern: params.$A
+                - pattern: payload.$A
+                - pattern: toolArgs.$A
+                - pattern: toolInput.$A
+
+  #
+  # 4) Dynamic require/import from user input
+  #
+  - id: mergesafe.mcp.dynamic-require.user-controlled
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Dynamic require/import using user-controlled input can lead to arbitrary code/module loading."
+    metadata:
+      category: injection
+      confidence: medium
+      tags: [mcp, node, dynamic-import, rce]
+      references:
+        - "https://nodejs.org/api/modules.html"
+    patterns:
+      - pattern-either:
+          - pattern: require($X)
+          - pattern: import($X)
+      - metavariable-pattern:
+          metavariable: $X
+          patterns:
+            - pattern-either:
+                - pattern: req.$A
+                - pattern: req.body.$A
+                - pattern: req.query.$A
+                - pattern: req.params.$A
+                - pattern: args.$A
+                - pattern: input.$A
+                - pattern: params.$A
+                - pattern: payload.$A
+                - pattern: toolArgs.$A
+                - pattern: toolInput.$A
+
+  #
+  # 5) eval / Function constructor from user input
+  #
+  - id: mergesafe.mcp.eval.user-controlled
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Eval / Function constructor using user-controlled input can lead to arbitrary code execution."
+    metadata:
+      category: injection
+      confidence: high
+      tags: [mcp, node, eval, rce]
+      references:
+        - "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/eval"
+    patterns:
+      - pattern-either:
+          - pattern: eval($X)
+          - pattern: new Function($X, ...)
+      - metavariable-pattern:
+          metavariable: $X
+          patterns:
+            - pattern-either:
+                - pattern: req.$A
+                - pattern: req.body.$A
+                - pattern: req.query.$A
+                - pattern: req.params.$A
+                - pattern: args.$A
+                - pattern: input.$A
+                - pattern: params.$A
+                - pattern: payload.$A
+                - pattern: toolArgs.$A
+                - pattern: toolInput.$A
+
+  #
+  # 6) Network egress / SSRF-ish: fetch/axios from user-controlled URL
+  #
+  - id: mergesafe.mcp.network-egress.user-url
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Network egress using user-controlled URL. Validate destinations and consider allowlists to prevent SSRF/egress abuse."
+    metadata:
+      category: network
+      confidence: medium
+      tags: [mcp, node, ssrf, egress]
+      references:
+        - "https://owasp.org/www-community/attacks/Server_Side_Request_Forgery"
+    patterns:
+      - pattern-either:
+          - pattern: fetch($U, ...)
+          - pattern: axios.get($U, ...)
+          - pattern: axios.post($U, ...)
+          - pattern: "axios.request({ url: $U, ... })"
+      - metavariable-pattern:
+          metavariable: $U
+          patterns:
+            - pattern-either:
+                - pattern: req.$A
+                - pattern: req.body.$A
+                - pattern: req.query.$A
+                - pattern: req.params.$A
+                - pattern: args.$A
+                - pattern: input.$A
+                - pattern: params.$A
+                - pattern: payload.$A
+                - pattern: toolArgs.$A
+                - pattern: toolInput.$A

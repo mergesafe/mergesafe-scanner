@@ -271,7 +271,6 @@ export function scanJsTaint(code: string, filePath: string): TaintFinding[] {
     v: boolean,
     initWasTainted: boolean
   ) => {
-    // Babel types allow VoidPattern here; ignore it.
     if (t.isVoidPattern(id)) return;
 
     if (t.isIdentifier(id)) {
@@ -294,7 +293,6 @@ export function scanJsTaint(code: string, filePath: string): TaintFinding[] {
   const resolveCallSink = (
     callee: t.Expression | t.V8IntrinsicIdentifier
   ): { ruleId: RuleId; sink: string } | null => {
-    // Identifier sinks (exec(...)) or imported/required aliases
     if (t.isIdentifier(callee)) {
       const name = callee.name;
 
@@ -311,12 +309,10 @@ export function scanJsTaint(code: string, filePath: string): TaintFinding[] {
       return null;
     }
 
-    // MemberExpression sinks (fs.writeFileSync(...), child_process.exec(...))
     if (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) {
       const prop = memberPropName(callee);
       if (!prop) return null;
 
-      // require("child_process").exec(...)
       if (t.isCallExpression(callee.object) && isRequireCall(callee.object)) {
         const mod = moduleFromRequire(callee.object);
         if (mod === "child_process" && CMD_SINKS.has(prop))
@@ -325,7 +321,6 @@ export function scanJsTaint(code: string, filePath: string): TaintFinding[] {
           return { ruleId: "MS003", sink: `${mod}.${prop}` };
       }
 
-      // fs.<sink>(...)
       if (t.isIdentifier(callee.object)) {
         const objName = callee.object.name;
         const b = getBinding(objName);
@@ -339,7 +334,6 @@ export function scanJsTaint(code: string, filePath: string): TaintFinding[] {
         if (isFs && FS_SINKS.has(prop)) return { ruleId: "MS003", sink: `${objName}.${prop}` };
       }
 
-      // fs.promises.writeFile(...)
       if (
         (t.isMemberExpression(callee.object) || t.isOptionalMemberExpression(callee.object)) &&
         t.isIdentifier(callee.object.object) &&
@@ -357,11 +351,12 @@ export function scanJsTaint(code: string, filePath: string): TaintFinding[] {
     return null;
   };
 
-  // TS interop: @types/babel__traverse uses `export = traverse`, so TS may treat
-  // the default import as a module object. Cast to a callable function.
-  const traverseFn = traverse as unknown as (node: t.Node, visitors: any) => void;
+  // Runtime interop fix:
+  // In some ESM/CJS combos, @babel/traverse comes through as { default: fn }.
+  const traverseFn =
+    (((traverse as any).default ?? traverse) as unknown) as (node: any, visitors: any) => void;
 
-  traverseFn(ast as unknown as t.Node, {
+  traverseFn(ast, {
     Program: {
       enter() {
         // already pushed
@@ -371,7 +366,6 @@ export function scanJsTaint(code: string, filePath: string): TaintFinding[] {
       },
     },
 
-    // scope handling (keep it light)
     Function: {
       enter() {
         scopeStack.push({ tainted: new Map(), bindings: new Map() });
@@ -383,7 +377,6 @@ export function scanJsTaint(code: string, filePath: string): TaintFinding[] {
 
     BlockStatement: {
       enter(path: NodePath<t.BlockStatement>) {
-        // avoid double-pushing for function bodies (Function already handled)
         if (path.parent && (t.isFunction(path.parent) || t.isCatchClause(path.parent))) return;
         scopeStack.push({ tainted: new Map(), bindings: new Map() });
       },
@@ -412,7 +405,6 @@ export function scanJsTaint(code: string, filePath: string): TaintFinding[] {
     VariableDeclarator(path: NodePath<t.VariableDeclarator>) {
       const { id, init } = path.node;
 
-      // require bindings
       if (isRequireCall(init)) {
         const mod = moduleFromRequire(init);
         if (MODULES_WE_CARE.has(mod)) {
@@ -435,7 +427,6 @@ export function scanJsTaint(code: string, filePath: string): TaintFinding[] {
         return;
       }
 
-      // taint propagation
       const initTainted = exprIsTainted(init as any);
       if (initTainted) {
         markPatternTaint(id, true, true);
@@ -443,7 +434,6 @@ export function scanJsTaint(code: string, filePath: string): TaintFinding[] {
     },
 
     AssignmentExpression(path: NodePath<t.AssignmentExpression>) {
-      // x = <tainted>
       if (path.node.operator !== "=") return;
       const left = path.node.left;
       const right = path.node.right;
@@ -456,7 +446,6 @@ export function scanJsTaint(code: string, filePath: string): TaintFinding[] {
       const sink = resolveCallSink(path.node.callee as any);
       if (!sink) return;
 
-      // emit if ANY arg is tainted (your v0 rule)
       for (let i = 0; i < path.node.arguments.length; i++) {
         const arg = path.node.arguments[i];
         if (t.isSpreadElement(arg)) {

@@ -21,6 +21,8 @@ interface SarifResult {
     };
   }>;
   fingerprints?: Record<string, string>;
+  // ✅ Step 5: keep merge context in SARIF so GitHub Code Scanning retains it
+  properties?: Record<string, any>;
 }
 
 interface SarifRun {
@@ -51,7 +53,6 @@ function toSarifLevel(severity: string): SarifLevel {
 // Keep URIs stable across Windows/macOS/Linux
 function toSarifUri(filePath: string | undefined): string | undefined {
   if (!filePath) return undefined;
-  // best-effort: keep as-is but normalize slashes
   return filePath.replace(/\\/g, '/');
 }
 
@@ -82,17 +83,69 @@ function normalizeRun(run: SarifRun): SarifRun {
   };
 }
 
-function findingToSarifResult(finding: Finding, engineId: string, redact: boolean): SarifResult {
-  const source =
-    finding.engineSources.find((entry) => entry.engineId === engineId) ?? finding.engineSources[0];
+function stableEngineSources(finding: Finding): Array<{
+  engineId: string;
+  engineRuleId?: string;
+  engineSeverity?: string;
+  message?: string;
+}> {
+  const src = Array.isArray(finding.engineSources) ? finding.engineSources : [];
+  return src
+    .map((s) => ({
+      engineId: String(s.engineId ?? '').trim(),
+      engineRuleId: s.engineRuleId,
+      engineSeverity: s.engineSeverity,
+      message: s.message,
+    }))
+    .filter((s) => Boolean(s.engineId))
+    .sort((a, b) => {
+      const aKey = `${a.engineId}:${a.engineRuleId ?? ''}:${a.engineSeverity ?? ''}`;
+      const bKey = `${b.engineId}:${b.engineRuleId ?? ''}:${b.engineSeverity ?? ''}`;
+      return aKey.localeCompare(bKey);
+    });
+}
+
+function stableEngineIds(finding: Finding): string[] {
+  return [...new Set(stableEngineSources(finding).map((s) => s.engineId))].sort((a, b) => a.localeCompare(b));
+}
+
+// ✅ Stable rule id for merged findings (avoids churn based on which engine created findingId first)
+function sarifRuleIdForFinding(finding: Finding): string {
+  return `mergesafe.finding.${finding.fingerprint}`;
+}
+
+function findingToSarifResultMerged(finding: Finding, redact: boolean): SarifResult {
   const location = finding.locations?.[0];
+  const engineIds = stableEngineIds(finding);
+  const multi = engineIds.length > 1;
+
+  const foundBy = engineIds.length ? engineIds.join(', ') : 'unknown';
 
   const safeMessage = redact
-    ? `${finding.title} (${engineId})`
-    : `${finding.title} (${engineId}) - ${finding.remediation}`;
+    ? `${finding.title} — Found by: ${foundBy}${multi ? ' (multi-engine confirmed)' : ''}`
+    : `${finding.title} — Found by: ${foundBy}${multi ? ' (multi-engine confirmed)' : ''} — ${finding.remediation}`;
+
+  const sources = stableEngineSources(finding);
+  const tags = Array.isArray(finding.tags)
+    ? [...new Set(finding.tags.map((t) => String(t ?? '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+    : [];
+
+  const props = {
+    mergesafe: {
+      findingId: finding.findingId,
+      fingerprint: finding.fingerprint,
+      severity: finding.severity,
+      confidence: finding.confidence,
+      category: finding.category,
+      owaspMcpTop10: finding.owaspMcpTop10,
+      tags,
+      multiEngineConfirmed: multi,
+      engineSources: sources,
+    },
+  };
 
   return {
-    ruleId: source?.engineRuleId ?? finding.findingId,
+    ruleId: sarifRuleIdForFinding(finding),
     level: toSarifLevel(finding.severity),
     message: { text: safeMessage },
     locations: location
@@ -106,24 +159,96 @@ function findingToSarifResult(finding: Finding, engineId: string, redact: boolea
         ]
       : undefined,
     fingerprints: { primaryLocationLineHash: finding.fingerprint },
+    properties: props,
   };
 }
 
-function findingsRun(engineId: string, displayName: string, findings: Finding[], redact: boolean): SarifRun {
-  // DEDUPE rules by id to satisfy GitHub SARIF validator
+function makeNoteResult(ruleId: string, text: string): SarifResult {
+  return {
+    ruleId,
+    level: 'note',
+    message: { text },
+  };
+}
+
+function engineStatusNotes(enginesMeta: EngineExecutionMeta[] | undefined): { rules: SarifRule[]; results: SarifResult[] } {
+  const rules: SarifRule[] = [];
+  const results: SarifResult[] = [];
+
+  if (!enginesMeta || enginesMeta.length === 0) return { rules, results };
+
+  const cisco = enginesMeta.find((e) => e.engineId === 'cisco');
+  if (!cisco) return { rules, results };
+
+  const ruleId = 'mergesafe.engine.cisco.note';
+  rules.push({
+    id: ruleId,
+    name: 'Cisco MCP scanner execution note',
+    shortDescription: { text: 'Cisco runs offline-safe by default; known-configs scans local MCP client configs.' },
+  });
+
+  if (cisco.status === 'ok') {
+    results.push(
+      makeNoteResult(
+        ruleId,
+        'Cisco ran in offline-safe mode. It may have scanned MCP client configs from known locations on this machine (Cursor/Windsurf/VS Code, etc.), not necessarily repo source. Validate relevance to the project.'
+      )
+    );
+  } else if (cisco.status === 'skipped') {
+    results.push(
+      makeNoteResult(
+        ruleId,
+        'Cisco was skipped (offline-safe default). To scan deterministically with Cisco, provide tools JSON (static mode) e.g. --cisco-tools <tools-list.json>, or run on a machine where MCP client configs are discoverable.'
+      )
+    );
+  } else if (cisco.status === 'failed' || cisco.status === 'timeout') {
+    const detail = cisco.errorMessage ? ` Details: ${cisco.errorMessage}` : '';
+    results.push(
+      makeNoteResult(
+        ruleId,
+        `Cisco failed to run.${detail} This does not fail the overall MergeSafe scan unless you explicitly require it.`
+      )
+    );
+  }
+
+  return { rules, results };
+}
+
+function mergedFindingsRun(args: {
+  findings: Finding[];
+  redact: boolean;
+  enginesMeta?: EngineExecutionMeta[];
+}): SarifRun {
+  const { findings, redact, enginesMeta } = args;
+
+  const notes = engineStatusNotes(enginesMeta);
+
+  // Rules: one per merged finding (stable id), plus note rule(s)
   const ruleMap = new Map<string, SarifRule>();
 
-  for (const finding of findings) {
-    const source =
-      finding.engineSources.find((entry) => entry.engineId === engineId) ?? finding.engineSources[0];
-    const id = source?.engineRuleId ?? finding.findingId;
-
-    if (!id) continue;
+  for (const f of findings) {
+    const id = sarifRuleIdForFinding(f);
     if (!ruleMap.has(id)) {
       ruleMap.set(id, {
         id,
-        name: finding.title,
-        shortDescription: { text: finding.title },
+        name: f.title,
+        shortDescription: { text: f.title },
+      });
+    }
+  }
+
+  for (const r of notes.rules) {
+    if (r?.id && !ruleMap.has(r.id)) ruleMap.set(r.id, r);
+  }
+
+  // Ensure rule exists for each note result
+  for (const r of notes.results) {
+    if (!r?.ruleId) continue;
+    if (!ruleMap.has(r.ruleId)) {
+      ruleMap.set(r.ruleId, {
+        id: r.ruleId,
+        name: r.ruleId,
+        shortDescription: { text: r.ruleId },
       });
     }
   }
@@ -133,24 +258,16 @@ function findingsRun(engineId: string, displayName: string, findings: Finding[],
   return normalizeRun({
     tool: {
       driver: {
-        name: engineId === 'mergesafe' ? 'MergeSafe' : displayName,
-        informationUri: engineId === 'mergesafe' ? 'https://github.com/mergesafe/mergesafe-scanner' : undefined,
+        name: 'MergeSafe',
+        informationUri: 'https://github.com/mergesafe/mergesafe-scanner',
         rules,
       },
     },
-    results: findings.map((finding) => findingToSarifResult(finding, engineId, redact)),
+    results: [
+      ...notes.results,
+      ...findings.map((f) => findingToSarifResultMerged(f, redact)),
+    ],
   });
-}
-
-function parseSarifRuns(filePath: string): SarifRun[] {
-  if (!fs.existsSync(filePath)) return [];
-  try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as { runs?: SarifRun[] };
-    const runs = Array.isArray(parsed.runs) ? parsed.runs : [];
-    return runs.map(normalizeRun);
-  } catch {
-    return [];
-  }
 }
 
 export function mergeSarifRuns(args: {
@@ -160,36 +277,15 @@ export function mergeSarifRuns(args: {
   redact: boolean;
 }): SarifLog {
   const { outDir, enginesMeta, canonicalFindings, redact } = args;
-  const runs: SarifRun[] = [];
 
-  const findingsByEngine = new Map<string, Finding[]>();
-  for (const finding of canonicalFindings) {
-    for (const source of finding.engineSources) {
-      const list = findingsByEngine.get(source.engineId) ?? [];
-      list.push(finding);
-      findingsByEngine.set(source.engineId, list);
-    }
-  }
-
-  const allEngineIds = new Set<string>([
-    'mergesafe',
-    ...enginesMeta.map((e) => e.engineId),
-    ...findingsByEngine.keys(),
-  ]);
-
-  for (const engineId of allEngineIds) {
-    const meta = enginesMeta.find((e) => e.engineId === engineId);
-
-    const importedRuns = meta?.artifacts?.sarif ? parseSarifRuns(meta.artifacts.sarif) : [];
-    if (importedRuns.length > 0) {
-      runs.push(...importedRuns);
-      continue;
-    }
-
-    const findings = findingsByEngine.get(engineId) ?? [];
-    const displayName = meta?.displayName ?? engineId;
-    runs.push(findingsRun(engineId, displayName, findings, redact));
-  }
+  // ✅ IMPORTANT: Output a single merged SARIF run so GitHub shows merged results, not duplicates per engine.
+  const runs: SarifRun[] = [
+    mergedFindingsRun({
+      findings: canonicalFindings,
+      redact,
+      enginesMeta,
+    }),
+  ];
 
   const log: SarifLog = {
     version: '2.1.0',
@@ -206,6 +302,12 @@ export function toSarif(result: ScanResult): SarifLog {
   return {
     version: '2.1.0',
     $schema: 'https://json.schemastore.org/sarif-2.1.0.json',
-    runs: [findingsRun('mergesafe', 'MergeSafe', result.findings, result.meta.redacted)],
+    runs: [
+      mergedFindingsRun({
+        findings: result.findings,
+        redact: result.meta.redacted,
+        enginesMeta: result.meta.engines,
+      }),
+    ],
   };
 }
