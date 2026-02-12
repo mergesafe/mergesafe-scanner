@@ -398,14 +398,20 @@ function deriveFamilyKey(finding: Finding): string {
     return 'fs-read';
   }
 
-  if (/\b(file|filesystem|fs)\b/.test(haystack) && /\b(write|writefile|write-file|write_file|append|overwrite)\b/.test(haystack)) {
+  if (
+    /\b(file|filesystem|fs)\b/.test(haystack) &&
+    /\b(write|writefile|write-file|write_file|append|overwrite)\b/.test(haystack)
+  ) {
     return 'fs-write';
   }
 
   if (/\b(network|egress|ssrf)\b/.test(haystack)) {
     return 'net-egress';
   }
-  if (/\b(http|https|fetch|axios|request|curl|url)\b/.test(haystack) && /\b(allowlist|whitelist|restricted|validate)\b/.test(haystack)) {
+  if (
+    /\b(http|https|fetch|axios|request|curl|url)\b/.test(haystack) &&
+    /\b(allowlist|whitelist|restricted|validate)\b/.test(haystack)
+  ) {
     return 'net-egress';
   }
   if (/\b(http|https|fetch|axios|request|curl|url)\b/.test(haystack)) {
@@ -428,7 +434,11 @@ function deriveFamilyKey(finding: Finding): string {
     return 'dynamic-tool-registration';
   }
 
-  if (/\btools(-|\s)?list\.json\b/.test(haystack) || /\btools manifest\b/.test(haystack) || /\bmanifest\b/.test(haystack)) {
+  if (
+    /\btools(-|\s)?list\.json\b/.test(haystack) ||
+    /\btools manifest\b/.test(haystack) ||
+    /\bmanifest\b/.test(haystack)
+  ) {
     if (/\bexec\b|\bcommand\b|\bshell\b/.test(haystack)) return 'manifest-command-exec';
     if (/\bread\b|\bfile read\b/.test(haystack)) return 'manifest-fs-read';
     if (/\bwrite\b|\bfile write\b/.test(haystack)) return 'manifest-fs-write';
@@ -437,7 +447,18 @@ function deriveFamilyKey(finding: Finding): string {
     return 'manifest-risk';
   }
 
-  const noisy = new Set(['potential', 'avoid', 'consider', 'using', 'user', 'controlled', 'input', 'from', 'without', 'with']);
+  const noisy = new Set([
+    'potential',
+    'avoid',
+    'consider',
+    'using',
+    'user',
+    'controlled',
+    'input',
+    'from',
+    'without',
+    'with',
+  ]);
   const tokens = haystack.split(' ').filter(Boolean).filter((t) => !noisy.has(t));
   return tokens.slice(0, 6).join('-') || 'unknown';
 }
@@ -455,9 +476,28 @@ function mergeKeyForFinding(finding: Finding): string {
 }
 
 export function toFinding(raw: RawFinding, redact: boolean): Finding {
-  const snippetHash = stableHash(raw.evidence);
+  // Determinism: normalize evidence for hashing (CRLF/LF + trailing whitespace)
+  const normalizeEvidenceForHash = (s: string): string =>
+    String(s ?? '')
+      .replace(/\r\n/g, '\n')
+      .replace(/[ \t]+$/gm, '')
+      .trimEnd();
 
-  const signal = [raw.ruleId, raw.category, raw.owaspMcpTop10, ...(raw.tags ?? []), raw.title].filter(Boolean).join('|');
+  // Determinism: sort tags/refs so fingerprints + merge keys don't drift across platforms
+  const normalizedTags = [...(raw.tags ?? [])]
+    .map((t) => String(t ?? '').trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+
+  const normalizedRefs = [...(raw.references ?? [])]
+    .map((r) => String(r ?? '').trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+
+  const snippetHash = stableHash(normalizeEvidenceForHash(raw.evidence));
+
+  // IMPORTANT: use normalizedTags in the signal, otherwise tag-order drift changes fingerprints
+  const signal = [raw.ruleId, raw.category, raw.owaspMcpTop10, ...normalizedTags, raw.title].filter(Boolean).join('|');
   const fingerprint = findingFingerprint(raw.filePath, raw.line, signal);
 
   return {
@@ -467,14 +507,16 @@ export function toFinding(raw: RawFinding, redact: boolean): Finding {
     confidence: raw.confidence,
     category: raw.category,
     owaspMcpTop10: raw.owaspMcpTop10,
-    engineSources: [{ engineId: 'mergesafe', engineRuleId: raw.ruleId, engineSeverity: raw.severity, message: raw.title }],
+    engineSources: [
+      { engineId: 'mergesafe', engineRuleId: raw.ruleId, engineSeverity: raw.severity, message: raw.title },
+    ],
     locations: [{ filePath: normalizePathForKey(raw.filePath), line: raw.line }],
     evidence: redact
       ? { excerptHash: snippetHash, note: 'Redacted evidence' }
       : { excerpt: raw.evidence, note: 'Static pattern match' },
     remediation: raw.remediation,
-    references: raw.references,
-    tags: raw.tags,
+    references: normalizedRefs,
+    tags: normalizedTags,
     fingerprint,
   };
 }

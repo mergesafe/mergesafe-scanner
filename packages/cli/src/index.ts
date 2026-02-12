@@ -12,6 +12,8 @@ import {
   type CliConfig,
   type PathMode,
   type ScanResult,
+  type ScanStatus,
+  type GateStatus,
 } from '@mergesafe/core';
 import { runEngines, defaultAdapters, listEngines } from '@mergesafe/engines';
 import { generateHtmlReport, generateSummaryMarkdown } from '@mergesafe/report';
@@ -80,7 +82,6 @@ function pushOpt(opts: Record<string, OptValue>, key: string, value: string) {
     opts[key] = cur;
     return;
   }
-  // convert existing single value to array
   opts[key] = [String(cur), value];
 }
 
@@ -111,19 +112,30 @@ export function getHelpText(target: ParsedArgs['helpTarget'] = 'general'): strin
     '  mergesafe scan <path> [options]',
     '',
     'Options:',
-    '  --out-dir <dir>                Output directory (default: mergesafe)',
-    '  --format <csv>                 Output formats (default: json,html,sarif,md)',
-    '  --mode <fast|deep>             Scan mode (default: fast)',
-    '  --timeout <seconds>            Per-engine timeout seconds (default: 30)',
-    '  --concurrency <n>              Engine concurrency (default: 4)',
-    '  --fail-on <critical|high|none> Fail threshold (default: high)',
-    '  --config <path>                Optional YAML config path',
-    '  --engines <list>               Comma/space-separated engines list',
-    '  --auto-install <true|false>    Auto-install missing tools (default: true)',
-    '  --no-auto-install              Disable tool auto-install',
-    '  --redact                       Redact sensitive fields in output',
-    '  --no-cisco                     Remove Cisco engine from selected engines',
+    '  --out-dir <dir>                 Output directory (default: mergesafe)',
+    '  --format <csv>                  Output formats (default: json,html,sarif,md)',
+    '  --mode <fast|deep>              Scan mode (default: fast)',
+    '  --timeout <seconds>             Per-engine timeout seconds (default: 30)',
+    '  --concurrency <n>               Engine concurrency (default: 4)',
+    '  --fail-on <critical|high|none>  Fail threshold (default: high)',
+    '  --config <path>                 Optional YAML config path',
+    '  --engines <list>                Comma/space-separated engines list',
+    '  --auto-install <true|false>     Auto-install missing tools (default: true)',
+    '  --no-auto-install               Disable tool auto-install',
+    '  --redact                        Redact sensitive fields in output',
+    '  --no-cisco                      Remove Cisco engine from selected engines',
     '  --path-mode <relative|absolute> Path style for outputs (default: relative)',
+    '',
+    'Cisco options (when cisco is selected):',
+    '  --cisco-mode <auto|static|known-configs|config|remote|stdio>',
+    '  --cisco-tools <path>            Path to tools JSON (static mode)',
+    '  --cisco-config-path <path>      Cisco config file path (config/remote/stdio)',
+    '  --cisco-server-url <url>        Cisco server URL (remote)',
+    '  --cisco-stdio-command <cmd>     Cisco stdio command (stdio)',
+    '  --cisco-stdio-arg <arg>         Repeatable stdio arg (stdio)',
+    '  --cisco-bearer-token <token>    Auth token',
+    '  --cisco-header <k:v>            Repeatable header (preserves case/spaces)',
+    '  --cisco-analyzers <csv>         Analyzer list (default: yara)',
   ].join('\n');
 
   const listEngines = [
@@ -133,7 +145,7 @@ export function getHelpText(target: ParsedArgs['helpTarget'] = 'general'): strin
     '  mergesafe --list-engines',
     '',
     'Prints one line per engine as:',
-    '  <engineId>\tavailable=<true|false>\tversion=<version>\thint=<installHint>',
+    '  <engineId>\\tavailable=<true|false>\\tversion=<version>\\thint=<installHint>',
   ].join('\n');
 
   if (target === 'scan') return scan;
@@ -144,6 +156,11 @@ export function getHelpText(target: ParsedArgs['helpTarget'] = 'general'): strin
 export function parseArgs(argv: string[]): ParsedArgs {
   const normalized = argv[0] === '--' ? argv.slice(1) : argv;
 
+  // No args => show help (better UX)
+  if (normalized.length === 0) {
+    return { command: 'scan', opts: {}, showHelp: true, helpTarget: 'general' };
+  }
+
   // Support legacy: mergesafe --list-engines
   if (normalized.includes('--list-engines')) {
     const showHelp = hasHelpFlag(normalized);
@@ -152,18 +169,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
       const token = normalized[i];
       if (!token.startsWith('--')) continue;
 
-      // support --key=value
       const eqIdx = token.indexOf('=');
       const key = (eqIdx >= 0 ? token.slice(2, eqIdx) : token.slice(2)).trim();
       const valueInline = eqIdx >= 0 ? token.slice(eqIdx + 1) : undefined;
 
       if (BOOLEAN_FLAGS.has(key)) {
-        // if user wrote --flag=false, treat it as a value
-        if (valueInline !== undefined) {
-          opts[key] = valueInline;
-        } else {
-          opts[key] = true;
-        }
+        opts[key] = valueInline !== undefined ? valueInline : true;
         continue;
       }
 
@@ -207,24 +218,22 @@ export function parseArgs(argv: string[]): ParsedArgs {
     };
   }
 
-  if (command !== 'scan' || !scanPath) throw new Error('Usage: mergesafe scan <path> [options]');
+  if (command !== 'scan' || !scanPath) {
+    // fallback to help instead of throwing hard
+    return { command: 'scan', opts: {}, showHelp: true, helpTarget: 'general' };
+  }
 
   const opts: Record<string, OptValue> = {};
   for (let i = 0; i < rest.length; i++) {
     const token = rest[i];
     if (!token.startsWith('--')) continue;
 
-    // support --key=value
     const eqIdx = token.indexOf('=');
     const key = (eqIdx >= 0 ? token.slice(2, eqIdx) : token.slice(2)).trim();
     const valueInline = eqIdx >= 0 ? token.slice(eqIdx + 1) : undefined;
 
     if (BOOLEAN_FLAGS.has(key)) {
-      if (valueInline !== undefined) {
-        opts[key] = valueInline;
-      } else {
-        opts[key] = true;
-      }
+      opts[key] = valueInline !== undefined ? valueInline : true;
       continue;
     }
 
@@ -260,6 +269,16 @@ export function normalizeOutDir(
   return pathLib.resolve(cwd, value);
 }
 
+function parseBooleanOpt(value: string | boolean | undefined, defaultValue: boolean): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value !== 'string') return defaultValue;
+  const normalized = value.trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  return defaultValue;
+}
+
+// For lists where lowercasing is desired (formats, engines)
 export function parseListOpt(value: string | string[] | undefined, defaults: string[]): string[] {
   const raw = Array.isArray(value) ? value.join(',') : value;
   const parsed = (raw ?? '')
@@ -270,20 +289,31 @@ export function parseListOpt(value: string | string[] | undefined, defaults: str
   return deduped.length ? deduped : defaults;
 }
 
-function parseBooleanOpt(value: string | boolean | undefined, defaultValue: boolean): boolean {
-  if (typeof value === 'boolean') return value;
-  if (typeof value !== 'string') return defaultValue;
-  const normalized = value.trim().toLowerCase();
-  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
-  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
-  return defaultValue;
+// For args/headers where case + spaces must be preserved.
+// - If array: keep each entry as-is (trimmed), no splitting.
+// - If string: split by comma only.
+function parseRawListPreserve(value: string | string[] | undefined, defaults: string[]): string[] {
+  if (Array.isArray(value)) {
+    const cleaned = value.map((v) => String(v ?? '').trim()).filter(Boolean);
+    const deduped = [...new Set(cleaned)];
+    return deduped.length ? deduped : defaults;
+  }
+  if (typeof value === 'string') {
+    const cleaned = value
+      .split(',')
+      .map((v) => v.trim())
+      .filter(Boolean);
+    const deduped = [...new Set(cleaned)];
+    return deduped.length ? deduped : defaults;
+  }
+  return defaults;
 }
 
 function parseCiscoMode(raw: unknown, fallback: CiscoMode): CiscoMode {
   if (typeof raw !== 'string') return fallback;
   const v = raw.trim().toLowerCase();
   const allowed: CiscoMode[] = ['auto', 'static', 'known-configs', 'config', 'remote', 'stdio'];
-  return (allowed.includes(v as CiscoMode) ? (v as CiscoMode) : fallback);
+  return allowed.includes(v as CiscoMode) ? (v as CiscoMode) : fallback;
 }
 
 export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
@@ -296,12 +326,12 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
   const format = parsedFormats.filter((entry) => ALLOWED_FORMATS.has(entry as (typeof DEFAULT_FORMATS)[number]));
 
   // Engines list (default includes cisco unless user disables)
-  const enginesFromArgs = (opts.engines as string | undefined);
-  const enginesFromCfg = (cfg.engines as string | string[] | undefined);
+  const enginesFromArgs = opts.engines as string | undefined;
+  const enginesFromCfg = cfg.engines as string | string[] | undefined;
 
   let engines = parseListOpt(enginesFromArgs ?? enginesFromCfg, [...DEFAULT_ENGINES]);
 
-  // --no-cisco force removal
+  // --no-cisco force removal (robust boolean parse)
   const noCisco = parseBooleanOpt(opts['no-cisco'] as any, false);
   if (noCisco) engines = engines.filter((e) => e !== 'cisco');
 
@@ -343,19 +373,32 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
       (opts['cisco-stdio-command'] as string | undefined) ??
       (cfg.cisco?.stdioCommand as string | undefined),
 
-    stdioArgs: parseListOpt(ciscoStdioArgsRaw, []),
+    // preserve args exactly (no lowercasing, no whitespace splitting)
+    stdioArgs: parseRawListPreserve(ciscoStdioArgsRaw, []),
 
     bearerToken:
       (opts['cisco-bearer-token'] as string | undefined) ??
       (cfg.cisco?.bearerToken as string | undefined),
 
-    headers: parseListOpt(ciscoHeadersRaw, []),
+    // preserve header values exactly
+    headers: parseRawListPreserve(ciscoHeadersRaw, []),
 
     analyzers:
       (opts['cisco-analyzers'] as string | undefined) ??
       (cfg.cisco?.analyzers as string | undefined) ??
       'yara',
   };
+
+  const noAutoInstall = parseBooleanOpt(opts['no-auto-install'] as any, false);
+
+  const pathModeRaw =
+    (opts['path-mode'] as string | undefined) ??
+    (cfg.pathMode as string | undefined) ??
+    'relative';
+
+  const pathMode = (String(pathModeRaw).trim().toLowerCase() === 'absolute' ? 'absolute' : 'relative') as PathMode;
+
+  const redact = parseBooleanOpt((opts.redact as any) ?? (cfg.redact as any), false);
 
   return {
     outDir: normalizeOutDir((opts['out-dir'] as string) ?? cfg.outDir),
@@ -364,20 +407,17 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
     timeout: Number((opts.timeout as string) ?? cfg.timeout ?? 30),
     concurrency: Number((opts.concurrency as string) ?? cfg.concurrency ?? 4),
     failOn: ((opts['fail-on'] as CliConfig['failOn']) ?? cfg.failOn ?? 'high'),
-    redact: Boolean(opts.redact ?? cfg.redact ?? false),
-    autoInstall: opts['no-auto-install']
+    redact,
+    autoInstall: noAutoInstall
       ? false
       : parseBooleanOpt(
           (opts['auto-install'] as string | boolean | undefined) ?? (cfg.autoInstall as boolean | undefined),
           true
         ),
-    pathMode: (((opts['path-mode'] as string | undefined) ?? (cfg.pathMode as string | undefined) ?? 'relative') ===
-      'absolute'
-      ? 'absolute'
-      : 'relative') as PathMode,
+    pathMode,
     engines,
 
-    // Extra config consumed by adapters (Step 3)
+    // Extra config consumed by adapters
     cisco: ciscoConfig,
   };
 }
@@ -401,9 +441,21 @@ export async function runScan(scanPath: string, config: CliConfigExt, adapters =
     }))
   );
 
+  const enginesMetaSorted = (meta ?? []).slice().sort((a, b) => a.engineId.localeCompare(b.engineId));
+
   const summary = summarize(normalizedFindings, config.failOn, {
-    engines: (meta ?? []).slice().sort((a, b) => a.engineId.localeCompare(b.engineId)),
+    engines: enginesMetaSorted,
   });
+
+  // Deterministic per-engine counts (1 per finding per engineId, even if multiple engineSources match same engine)
+  const byEngine: Record<string, number> = Object.fromEntries(enginesMetaSorted.map((e) => [e.engineId, 0]));
+  for (const f of normalizedFindings) {
+    const ids = new Set((f.engineSources ?? []).map((s) => s.engineId).filter(Boolean));
+    for (const id of ids) {
+      if (byEngine[id] === undefined) byEngine[id] = 0;
+      byEngine[id] += 1;
+    }
+  }
 
   return {
     meta: {
@@ -413,23 +465,19 @@ export async function runScan(scanPath: string, config: CliConfigExt, adapters =
       timeout: config.timeout,
       concurrency: config.concurrency,
       redacted: config.redact,
-      engines: (meta ?? []).slice().sort((a, b) => a.engineId.localeCompare(b.engineId)),
+      engines: enginesMetaSorted,
     },
     summary,
     findings: normalizedFindings,
-    byEngine: Object.fromEntries(
-      (meta ?? [])
-        .slice()
-        .sort((a, b) => a.engineId.localeCompare(b.engineId))
-        .map((entry) => [
-        entry.engineId,
-        normalizedFindings.filter((finding) => finding.engineSources.some((source) => source.engineId === entry.engineId)).length,
-      ])
-    ),
+    byEngine,
   };
 }
 
-export function writeOutputs(result: ScanResult, config: CliConfigExt) {
+export function writeOutputs(
+  result: ScanResult,
+  config: CliConfigExt,
+  opts?: { uriBaseDir?: string }
+) {
   const outDirAbs = normalizeOutDir(config.outDir);
   fs.mkdirSync(outDirAbs, { recursive: true });
 
@@ -445,14 +493,15 @@ export function writeOutputs(result: ScanResult, config: CliConfigExt) {
   if (wants.has('json')) fs.writeFileSync(path.join(outDirAbs, 'report.json'), JSON.stringify(result, null, 2));
   if (wants.has('md')) fs.writeFileSync(path.join(outDirAbs, 'summary.md'), generateSummaryMarkdown(result));
   if (wants.has('html')) fs.writeFileSync(path.join(outDirAbs, 'report.html'), generateHtmlReport(result));
-  if (wants.has('sarif'))
+  if (wants.has('sarif')) {
     mergeSarifRuns({
       outDir: outDirAbs,
       enginesMeta: result.meta.engines ?? [],
       canonicalFindings: result.findings,
       redact: result.meta.redacted,
-      uriBaseDir: process.cwd(),
+      uriBaseDir: opts?.uriBaseDir ?? process.cwd(),
     });
+  }
 
   return outDirAbs;
 }
@@ -465,6 +514,20 @@ function resolveScanPath(inputPath: string): string {
   if (fs.existsSync(repoRelative)) return repoRelative;
 
   return abs;
+}
+
+function exitCodeFor(result: ScanResult): number {
+  const scanStatus: ScanStatus = result.summary.scanStatus ?? 'COMPLETED';
+  const gateStatus: GateStatus = result.summary.gate?.status ?? result.summary.status ?? 'PASS';
+
+  // Scan failed hard (no engine ok) => distinct code
+  if (scanStatus === 'FAILED') return 3;
+
+  // Policy gate failed
+  if (gateStatus === 'FAIL') return 2;
+
+  // Otherwise ok (including PARTIAL)
+  return 0;
 }
 
 async function main() {
@@ -485,13 +548,25 @@ async function main() {
     return;
   }
 
-  const result = await runScan(resolveScanPath(parsed.scanPath!), config);
-  const outputPath = writeOutputs(result, config);
+  const scanPathAbs = resolveScanPath(parsed.scanPath!);
+  const result = await runScan(scanPathAbs, config);
+
+  // Use repo root (if any) for SARIF URI base dir (more reproducible + better relative paths)
+  const repoRoot = findRepoRoot(scanPathAbs) ?? scanPathAbs;
+
+  const outputPath = writeOutputs(result, config, { uriBaseDir: repoRoot });
 
   console.log(`MergeSafe: wrote outputs to ${outputPath}`);
-  console.log(`Engines: ${result.meta.engines?.map((entry) => `${entry.engineId}=${entry.status}`).join(' ') ?? 'none'}`);
-  console.log(`MergeSafe ${result.summary.status} grade ${result.summary.grade} findings=${result.summary.totalFindings}`);
-  process.exitCode = result.summary.status === 'FAIL' ? 2 : 0;
+  console.log(`Engines: ${result.meta.engines?.map((e) => `${e.engineId}=${e.status}`).join(' ') ?? 'none'}`);
+
+  const scanStatus = result.summary.scanStatus ?? 'COMPLETED';
+  const gateStatus = result.summary.gate?.status ?? result.summary.status ?? 'PASS';
+
+  console.log(
+    `MergeSafe scan=${scanStatus} gate=${gateStatus} grade=${result.summary.grade} findings=${result.summary.totalFindings}`
+  );
+
+  process.exitCode = exitCodeFor(result);
 }
 
 /**
