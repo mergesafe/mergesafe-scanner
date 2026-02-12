@@ -1,18 +1,18 @@
 {
   "meta": {
     "scannedPath": "fixtures/node-unsafe-server",
-    "generatedAt": "2026-02-12T20:30:36.713Z",
+    "generatedAt": "2026-02-12T20:59:21.532Z",
     "mode": "fast",
     "timeout": 30,
     "concurrency": 4,
-    "redacted": false,
+    "redacted": true,
     "engines": [
       {
         "engineId": "mergesafe",
         "displayName": "MergeSafe deterministic rules",
         "version": "builtin",
         "status": "ok",
-        "durationMs": 55,
+        "durationMs": 21,
         "installHint": "Built in - no install required."
       }
     ]
@@ -38,7 +38,7 @@
   },
   "findings": [
     {
-      "findingId": "ms-ec0e1abd76e768c1",
+      "findingId": "ms-31055677bb5bd72c",
       "title": "Command execution from user-controlled input",
       "severity": "critical",
       "confidence": "medium",
@@ -59,8 +59,8 @@
         }
       ],
       "evidence": {
-        "excerpt": "exec(req.query.cmd);",
-        "note": "Merged evidence (best available excerpt)"
+        "excerptHash": "3a9810d3fee53516",
+        "note": "Merged evidence (hash only)"
       },
       "remediation": "Avoid shell execution; never pass request-derived data into process execution. Prefer allowlists, safe APIs, and strict input validation.",
       "references": [],
@@ -68,10 +68,10 @@
         "exec",
         "taint"
       ],
-      "fingerprint": "ec0e1abd76e768c1"
+      "fingerprint": "31055677bb5bd72c"
     },
     {
-      "findingId": "ms-5cd712c991c679e7",
+      "findingId": "ms-32dcd0e16deae65e",
       "title": "Dynamic tool registration from untrusted input",
       "severity": "critical",
       "confidence": "medium",
@@ -92,18 +92,18 @@
         }
       ],
       "evidence": {
-        "excerpt": "Dynamic tool registration from user input detected",
-        "note": "Merged evidence (best available excerpt)"
+        "excerptHash": "f46f9e17661d98bf",
+        "note": "Merged evidence (hash only)"
       },
       "remediation": "Disallow dynamic tool registration from untrusted data.",
       "references": [],
       "tags": [
         "dynamic-tools"
       ],
-      "fingerprint": "5cd712c991c679e7"
+      "fingerprint": "32dcd0e16deae65e"
     },
     {
-      "findingId": "ms-88d91634cdf553b7",
+      "findingId": "ms-b6a962733aacb1f3",
       "title": "Dangerous tool capability: arbitrary command execution exposed",
       "severity": "critical",
       "confidence": "medium",
@@ -124,8 +124,8 @@
         }
       ],
       "evidence": {
-        "excerpt": "exec_system_command: Runs an arbitrary system command on the host machine. Intended for advanced admin automation. WARNING: can execute any shell command. | schema props=[command, cwd, timeoutMs] required=[command]",
-        "note": "Merged evidence (best available excerpt)"
+        "excerptHash": "4bf15ab189ac2501",
+        "note": "Merged evidence (hash only)"
       },
       "remediation": "Do not expose arbitrary command execution tools to untrusted callers. Remove shell execution, enforce strict allowlists, require strong auth + approvals, and sandbox execution.",
       "references": [],
@@ -134,10 +134,10 @@
         "policy",
         "tool-manifest"
       ],
-      "fingerprint": "88d91634cdf553b7"
+      "fingerprint": "b6a962733aacb1f3"
     },
     {
-      "findingId": "ms-80ef376eebb37b45",
+      "findingId": "ms-c1e41f5fe8e2c434",
       "title": "Destructive tools exposed without gating hints",
       "severity": "high",
       "confidence": "medium",
@@ -158,8 +158,8 @@
         }
       ],
       "evidence": {
-        "excerpt": "destructive pattern",
-        "note": "Merged evidence (best available excerpt)"
+        "excerptHash": "ca460dca4eabae2c",
+        "note": "Merged evidence (hash only)"
       },
       "remediation": "Require explicit authorization/gating hints.",
       "references": [],
@@ -168,10 +168,10 @@
         "gating",
         "gating-missing"
       ],
-      "fingerprint": "80ef376eebb37b45"
+      "fingerprint": "c1e41f5fe8e2c434"
     },
     {
-      "findingId": "ms-2e67d4836dd0e4e7",
+      "findingId": "ms-bbe867373bae3191",
       "title": "Missing auth middleware smell on HTTP MCP endpoints",
       "severity": "high",
       "confidence": "medium",
@@ -192,18 +192,18 @@
         }
       ],
       "evidence": {
-        "excerpt": "Endpoint appears unauthenticated",
-        "note": "Merged evidence (best available excerpt)"
+        "excerptHash": "52e279ba99d4c8f0",
+        "note": "Merged evidence (hash only)"
       },
       "remediation": "Add auth middleware to MCP endpoints.",
       "references": [],
       "tags": [
         "auth"
       ],
-      "fingerprint": "2e67d4836dd0e4e7"
+      "fingerprint": "bbe867373bae3191"
     },
     {
-      "findingId": "ms-5bd074ebc5da1eab",
+      "findingId": "ms-d2e7c54a396a643c",
       "title": "Secrets or tokens likely logged or dumped",
       "severity": "high",
       "confidence": "medium",
@@ -224,18 +224,18 @@
         }
       ],
       "evidence": {
-        "excerpt": "Sensitive value appears in logs",
-        "note": "Merged evidence (best available excerpt)"
+        "excerptHash": "a06c752e8a19bb73",
+        "note": "Merged evidence (hash only)"
       },
       "remediation": "Redact secrets before logging.",
       "references": [],
       "tags": [
         "secrets"
       ],
-      "fingerprint": "5bd074ebc5da1eab"
+      "fingerprint": "d2e7c54a396a643c"
     },
     {
-      "findingId": "ms-64eb5af5dd24a139",
+      "findingId": "ms-333ca87956598cb9",
       "title": "Filesystem write with user-controlled path",
       "severity": "high",
       "confidence": "medium",
@@ -256,8 +256,8 @@
         }
       ],
       "evidence": {
-        "excerpt": "fs.writeFileSync(req.query.path, req.body.data);",
-        "note": "Merged evidence (best available excerpt)"
+        "excerptHash": "2972f231792b80c8",
+        "note": "Merged evidence (hash only)"
       },
       "remediation": "Use path normalization and allowlisted directories. Never write to arbitrary paths derived from requests or user input.",
       "references": [],
@@ -266,10 +266,10 @@
         "path-traversal",
         "taint"
       ],
-      "fingerprint": "64eb5af5dd24a139"
+      "fingerprint": "333ca87956598cb9"
     },
     {
-      "findingId": "ms-ac2c6c4103be1395",
+      "findingId": "ms-d26ea197d0dd55c5",
       "title": "Network egress from tool handlers without allowlist",
       "severity": "high",
       "confidence": "medium",
@@ -290,8 +290,8 @@
         }
       ],
       "evidence": {
-        "excerpt": "Outgoing network call in handler without allowlist",
-        "note": "Merged evidence (best available excerpt)"
+        "excerptHash": "122ccaf721c13825",
+        "note": "Merged evidence (hash only)"
       },
       "remediation": "Enforce explicit egress allowlist.",
       "references": [],
@@ -299,10 +299,10 @@
         "gating-missing",
         "net-egress"
       ],
-      "fingerprint": "ac2c6c4103be1395"
+      "fingerprint": "d26ea197d0dd55c5"
     },
     {
-      "findingId": "ms-071f50e90c002798",
+      "findingId": "ms-90c4f520eadd96bb",
       "title": "High-risk tool exposed without gating hints (auth/allowlist/approval)",
       "severity": "high",
       "confidence": "medium",
@@ -323,8 +323,8 @@
         }
       ],
       "evidence": {
-        "excerpt": "exec_system_command: Runs an arbitrary system command on the host machine. Intended for advanced admin automation. WARNING: can execute any shell command. | schema props=[command, cwd, timeoutMs] required=[command]",
-        "note": "Merged evidence (best available excerpt)"
+        "excerptHash": "dd9cef9529f56dd6",
+        "note": "Merged evidence (hash only)"
       },
       "remediation": "Add explicit gating: authentication, authorization scopes, approvals/confirmations, and allowlists. Document constraints in tool metadata and enforce them in code.",
       "references": [],
@@ -334,10 +334,10 @@
         "policy",
         "tool-manifest"
       ],
-      "fingerprint": "071f50e90c002798"
+      "fingerprint": "90c4f520eadd96bb"
     },
     {
-      "findingId": "ms-1360fd00404855b1",
+      "findingId": "ms-09a517c58dd95a01",
       "title": "Dangerous tool capability: arbitrary file read without allowlist",
       "severity": "high",
       "confidence": "medium",
@@ -358,8 +358,8 @@
         }
       ],
       "evidence": {
-        "excerpt": "read_any_file: Reads the contents of any local file path provided by the user (no allowlist). Useful for debugging and support. | schema props=[path, maxBytes] required=[path]",
-        "note": "Merged evidence (best available excerpt)"
+        "excerptHash": "b690e452d25a29b3",
+        "note": "Merged evidence (hash only)"
       },
       "remediation": "Restrict reads to allowlisted directories. Normalize paths, block absolute paths and traversal, enforce auth, and audit access.",
       "references": [],
@@ -369,10 +369,10 @@
         "policy",
         "tool-manifest"
       ],
-      "fingerprint": "1360fd00404855b1"
+      "fingerprint": "09a517c58dd95a01"
     },
     {
-      "findingId": "ms-319d490d9b8b7c43",
+      "findingId": "ms-2bf62b2b00f37456",
       "title": "High-risk tool exposed without gating hints (auth/allowlist/approval)",
       "severity": "high",
       "confidence": "medium",
@@ -393,8 +393,8 @@
         }
       ],
       "evidence": {
-        "excerpt": "read_any_file: Reads the contents of any local file path provided by the user (no allowlist). Useful for debugging and support. | schema props=[path, maxBytes] required=[path]",
-        "note": "Merged evidence (best available excerpt)"
+        "excerptHash": "dd9cef9529f56dd6",
+        "note": "Merged evidence (hash only)"
       },
       "remediation": "Add explicit gating: authentication, authorization scopes, approvals/confirmations, and allowlists. Document constraints in tool metadata and enforce them in code.",
       "references": [],
@@ -404,45 +404,10 @@
         "policy",
         "tool-manifest"
       ],
-      "fingerprint": "319d490d9b8b7c43"
+      "fingerprint": "2bf62b2b00f37456"
     },
     {
-      "findingId": "ms-138b022e0d56a62e",
-      "title": "Dangerous tool capability: unrestricted network egress without allowlist",
-      "severity": "high",
-      "confidence": "medium",
-      "category": "network",
-      "owaspMcpTop10": "MCP-A06",
-      "engineSources": [
-        {
-          "engineId": "mergesafe",
-          "engineRuleId": "MS014",
-          "engineSeverity": "high",
-          "message": "Dangerous tool capability: unrestricted network egress without allowlist"
-        }
-      ],
-      "locations": [
-        {
-          "filePath": "fixtures/node-unsafe-server/tools-list.json",
-          "line": 31
-        }
-      ],
-      "evidence": {
-        "excerpt": "http_fetch: Fetches any URL and returns the response body. Supports internal hosts and arbitrary headers. Can be used to call internal services. | schema props=[url, method, headers] required=[url]",
-        "note": "Merged evidence (best available excerpt)"
-      },
-      "remediation": "Enforce egress allowlists (hosts/schemes/ports). Block private/link-local ranges by default. Limit user-controlled headers. Require auth + approvals.",
-      "references": [],
-      "tags": [
-        "gating-missing",
-        "net-egress",
-        "policy",
-        "tool-manifest"
-      ],
-      "fingerprint": "138b022e0d56a62e"
-    },
-    {
-      "findingId": "ms-a5f2dd0088c83f7c",
+      "findingId": "ms-065f0bddaf56dcef",
       "title": "High-risk tool exposed without gating hints (auth/allowlist/approval)",
       "severity": "high",
       "confidence": "medium",
@@ -463,8 +428,8 @@
         }
       ],
       "evidence": {
-        "excerpt": "http_fetch: Fetches any URL and returns the response body. Supports internal hosts and arbitrary headers. Can be used to call internal services. | schema props=[url, method, headers] required=[url]",
-        "note": "Merged evidence (best available excerpt)"
+        "excerptHash": "dd9cef9529f56dd6",
+        "note": "Merged evidence (hash only)"
       },
       "remediation": "Add explicit gating: authentication, authorization scopes, approvals/confirmations, and allowlists. Document constraints in tool metadata and enforce them in code.",
       "references": [],
@@ -474,10 +439,45 @@
         "policy",
         "tool-manifest"
       ],
-      "fingerprint": "a5f2dd0088c83f7c"
+      "fingerprint": "065f0bddaf56dcef"
     },
     {
-      "findingId": "ms-becb87ca757d9347",
+      "findingId": "ms-3975848c2c8ad209",
+      "title": "Dangerous tool capability: unrestricted network egress without allowlist",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "network",
+      "owaspMcpTop10": "MCP-A06",
+      "engineSources": [
+        {
+          "engineId": "mergesafe",
+          "engineRuleId": "MS014",
+          "engineSeverity": "high",
+          "message": "Dangerous tool capability: unrestricted network egress without allowlist"
+        }
+      ],
+      "locations": [
+        {
+          "filePath": "fixtures/node-unsafe-server/tools-list.json",
+          "line": 31
+        }
+      ],
+      "evidence": {
+        "excerptHash": "e6de166f7980ed26",
+        "note": "Merged evidence (hash only)"
+      },
+      "remediation": "Enforce egress allowlists (hosts/schemes/ports). Block private/link-local ranges by default. Limit user-controlled headers. Require auth + approvals.",
+      "references": [],
+      "tags": [
+        "gating-missing",
+        "net-egress",
+        "policy",
+        "tool-manifest"
+      ],
+      "fingerprint": "3975848c2c8ad209"
+    },
+    {
+      "findingId": "ms-428255fe13e67a3a",
       "title": "Dangerous tool behavior: token/secret logging helper present",
       "severity": "high",
       "confidence": "medium",
@@ -498,8 +498,8 @@
         }
       ],
       "evidence": {
-        "excerpt": "log_debug_token: Debug helper that prints tokens/keys during troubleshooting. (Should never be enabled in production.) | schema props=[token] required=[token]",
-        "note": "Merged evidence (best available excerpt)"
+        "excerptHash": "edb01c0be4b8a74d",
+        "note": "Merged evidence (hash only)"
       },
       "remediation": "Remove secret/token logging tools from production. If needed locally, gate behind build flags, redact outputs, and ensure secrets never reach logs.",
       "references": [],
@@ -509,10 +509,10 @@
         "secrets",
         "tool-manifest"
       ],
-      "fingerprint": "becb87ca757d9347"
+      "fingerprint": "428255fe13e67a3a"
     },
     {
-      "findingId": "ms-e06dd8f1fd2715c2",
+      "findingId": "ms-99f5d4f0665c1286",
       "title": "Tool descriptions claim read-only but code suggests writes/egress",
       "severity": "medium",
       "confidence": "medium",
@@ -533,18 +533,18 @@
         }
       ],
       "evidence": {
-        "excerpt": "Read-only claim conflicts with mutating capabilities",
-        "note": "Merged evidence (best available excerpt)"
+        "excerptHash": "09d100e509ba6822",
+        "note": "Merged evidence (hash only)"
       },
       "remediation": "Align tool metadata with actual capabilities.",
       "references": [],
       "tags": [
         "tool-metadata"
       ],
-      "fingerprint": "e06dd8f1fd2715c2"
+      "fingerprint": "99f5d4f0665c1286"
     },
     {
-      "findingId": "ms-d3a50c97926e67ec",
+      "findingId": "ms-1dd7e517b754b249",
       "title": "Overly-broad OAuth scope patterns in config",
       "severity": "medium",
       "confidence": "medium",
@@ -565,18 +565,18 @@
         }
       ],
       "evidence": {
-        "excerpt": "Broad OAuth scope detected",
-        "note": "Merged evidence (best available excerpt)"
+        "excerptHash": "2bfd57efbed9f5e0",
+        "note": "Merged evidence (hash only)"
       },
       "remediation": "Use least-privilege OAuth scopes.",
       "references": [],
       "tags": [
         "oauth"
       ],
-      "fingerprint": "d3a50c97926e67ec"
+      "fingerprint": "1dd7e517b754b249"
     },
     {
-      "findingId": "ms-612c3eccde6fc28e",
+      "findingId": "ms-cc9492a27784c1e8",
       "title": "Unsafe defaults (debug/allow-all)",
       "severity": "medium",
       "confidence": "medium",
@@ -597,15 +597,15 @@
         }
       ],
       "evidence": {
-        "excerpt": "Unsafe permissive defaults found",
-        "note": "Merged evidence (best available excerpt)"
+        "excerptHash": "1bfe45c79fe09c5a",
+        "note": "Merged evidence (hash only)"
       },
       "remediation": "Disable debug and tighten allow-lists.",
       "references": [],
       "tags": [
         "defaults"
       ],
-      "fingerprint": "612c3eccde6fc28e"
+      "fingerprint": "cc9492a27784c1e8"
     }
   ],
   "byEngine": {

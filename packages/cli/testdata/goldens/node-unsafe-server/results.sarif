@@ -9,122 +9,122 @@
           "informationUri": "https://github.com/mergesafe/mergesafe-scanner",
           "rules": [
             {
-              "id": "mergesafe.finding.071f50e90c002798",
+              "id": "mergesafe.finding.065f0bddaf56dcef",
               "name": "High-risk tool exposed without gating hints (auth/allowlist/approval)",
               "shortDescription": {
                 "text": "High-risk tool exposed without gating hints (auth/allowlist/approval)"
               }
             },
             {
-              "id": "mergesafe.finding.1360fd00404855b1",
+              "id": "mergesafe.finding.09a517c58dd95a01",
               "name": "Dangerous tool capability: arbitrary file read without allowlist",
               "shortDescription": {
                 "text": "Dangerous tool capability: arbitrary file read without allowlist"
               }
             },
             {
-              "id": "mergesafe.finding.138b022e0d56a62e",
-              "name": "Dangerous tool capability: unrestricted network egress without allowlist",
-              "shortDescription": {
-                "text": "Dangerous tool capability: unrestricted network egress without allowlist"
-              }
-            },
-            {
-              "id": "mergesafe.finding.2e67d4836dd0e4e7",
-              "name": "Missing auth middleware smell on HTTP MCP endpoints",
-              "shortDescription": {
-                "text": "Missing auth middleware smell on HTTP MCP endpoints"
-              }
-            },
-            {
-              "id": "mergesafe.finding.319d490d9b8b7c43",
-              "name": "High-risk tool exposed without gating hints (auth/allowlist/approval)",
-              "shortDescription": {
-                "text": "High-risk tool exposed without gating hints (auth/allowlist/approval)"
-              }
-            },
-            {
-              "id": "mergesafe.finding.5bd074ebc5da1eab",
-              "name": "Secrets or tokens likely logged or dumped",
-              "shortDescription": {
-                "text": "Secrets or tokens likely logged or dumped"
-              }
-            },
-            {
-              "id": "mergesafe.finding.5cd712c991c679e7",
-              "name": "Dynamic tool registration from untrusted input",
-              "shortDescription": {
-                "text": "Dynamic tool registration from untrusted input"
-              }
-            },
-            {
-              "id": "mergesafe.finding.612c3eccde6fc28e",
-              "name": "Unsafe defaults (debug/allow-all)",
-              "shortDescription": {
-                "text": "Unsafe defaults (debug/allow-all)"
-              }
-            },
-            {
-              "id": "mergesafe.finding.64eb5af5dd24a139",
-              "name": "Filesystem write with user-controlled path",
-              "shortDescription": {
-                "text": "Filesystem write with user-controlled path"
-              }
-            },
-            {
-              "id": "mergesafe.finding.80ef376eebb37b45",
-              "name": "Destructive tools exposed without gating hints",
-              "shortDescription": {
-                "text": "Destructive tools exposed without gating hints"
-              }
-            },
-            {
-              "id": "mergesafe.finding.88d91634cdf553b7",
-              "name": "Dangerous tool capability: arbitrary command execution exposed",
-              "shortDescription": {
-                "text": "Dangerous tool capability: arbitrary command execution exposed"
-              }
-            },
-            {
-              "id": "mergesafe.finding.a5f2dd0088c83f7c",
-              "name": "High-risk tool exposed without gating hints (auth/allowlist/approval)",
-              "shortDescription": {
-                "text": "High-risk tool exposed without gating hints (auth/allowlist/approval)"
-              }
-            },
-            {
-              "id": "mergesafe.finding.ac2c6c4103be1395",
-              "name": "Network egress from tool handlers without allowlist",
-              "shortDescription": {
-                "text": "Network egress from tool handlers without allowlist"
-              }
-            },
-            {
-              "id": "mergesafe.finding.becb87ca757d9347",
-              "name": "Dangerous tool behavior: token/secret logging helper present",
-              "shortDescription": {
-                "text": "Dangerous tool behavior: token/secret logging helper present"
-              }
-            },
-            {
-              "id": "mergesafe.finding.d3a50c97926e67ec",
+              "id": "mergesafe.finding.1dd7e517b754b249",
               "name": "Overly-broad OAuth scope patterns in config",
               "shortDescription": {
                 "text": "Overly-broad OAuth scope patterns in config"
               }
             },
             {
-              "id": "mergesafe.finding.e06dd8f1fd2715c2",
+              "id": "mergesafe.finding.2bf62b2b00f37456",
+              "name": "High-risk tool exposed without gating hints (auth/allowlist/approval)",
+              "shortDescription": {
+                "text": "High-risk tool exposed without gating hints (auth/allowlist/approval)"
+              }
+            },
+            {
+              "id": "mergesafe.finding.31055677bb5bd72c",
+              "name": "Command execution from user-controlled input",
+              "shortDescription": {
+                "text": "Command execution from user-controlled input"
+              }
+            },
+            {
+              "id": "mergesafe.finding.32dcd0e16deae65e",
+              "name": "Dynamic tool registration from untrusted input",
+              "shortDescription": {
+                "text": "Dynamic tool registration from untrusted input"
+              }
+            },
+            {
+              "id": "mergesafe.finding.333ca87956598cb9",
+              "name": "Filesystem write with user-controlled path",
+              "shortDescription": {
+                "text": "Filesystem write with user-controlled path"
+              }
+            },
+            {
+              "id": "mergesafe.finding.3975848c2c8ad209",
+              "name": "Dangerous tool capability: unrestricted network egress without allowlist",
+              "shortDescription": {
+                "text": "Dangerous tool capability: unrestricted network egress without allowlist"
+              }
+            },
+            {
+              "id": "mergesafe.finding.428255fe13e67a3a",
+              "name": "Dangerous tool behavior: token/secret logging helper present",
+              "shortDescription": {
+                "text": "Dangerous tool behavior: token/secret logging helper present"
+              }
+            },
+            {
+              "id": "mergesafe.finding.90c4f520eadd96bb",
+              "name": "High-risk tool exposed without gating hints (auth/allowlist/approval)",
+              "shortDescription": {
+                "text": "High-risk tool exposed without gating hints (auth/allowlist/approval)"
+              }
+            },
+            {
+              "id": "mergesafe.finding.99f5d4f0665c1286",
               "name": "Tool descriptions claim read-only but code suggests writes/egress",
               "shortDescription": {
                 "text": "Tool descriptions claim read-only but code suggests writes/egress"
               }
             },
             {
-              "id": "mergesafe.finding.ec0e1abd76e768c1",
-              "name": "Command execution from user-controlled input",
+              "id": "mergesafe.finding.b6a962733aacb1f3",
+              "name": "Dangerous tool capability: arbitrary command execution exposed",
               "shortDescription": {
-                "text": "Command execution from user-controlled input"
+                "text": "Dangerous tool capability: arbitrary command execution exposed"
+              }
+            },
+            {
+              "id": "mergesafe.finding.bbe867373bae3191",
+              "name": "Missing auth middleware smell on HTTP MCP endpoints",
+              "shortDescription": {
+                "text": "Missing auth middleware smell on HTTP MCP endpoints"
+              }
+            },
+            {
+              "id": "mergesafe.finding.c1e41f5fe8e2c434",
+              "name": "Destructive tools exposed without gating hints",
+              "shortDescription": {
+                "text": "Destructive tools exposed without gating hints"
+              }
+            },
+            {
+              "id": "mergesafe.finding.cc9492a27784c1e8",
+              "name": "Unsafe defaults (debug/allow-all)",
+              "shortDescription": {
+                "text": "Unsafe defaults (debug/allow-all)"
+              }
+            },
+            {
+              "id": "mergesafe.finding.d26ea197d0dd55c5",
+              "name": "Network egress from tool handlers without allowlist",
+              "shortDescription": {
+                "text": "Network egress from tool handlers without allowlist"
+              }
+            },
+            {
+              "id": "mergesafe.finding.d2e7c54a396a643c",
+              "name": "Secrets or tokens likely logged or dumped",
+              "shortDescription": {
+                "text": "Secrets or tokens likely logged or dumped"
               }
             }
           ]
@@ -132,10 +132,10 @@
       },
       "results": [
         {
-          "ruleId": "mergesafe.finding.e06dd8f1fd2715c2",
+          "ruleId": "mergesafe.finding.99f5d4f0665c1286",
           "level": "warning",
           "message": {
-            "text": "Tool descriptions claim read-only but code suggests writes/egress — Found by: mergesafe — Align tool metadata with actual capabilities."
+            "text": "Tool descriptions claim read-only but code suggests writes/egress — Found by: mergesafe"
           },
           "locations": [
             {
@@ -151,12 +151,12 @@
             }
           ],
           "fingerprints": {
-            "primaryLocationLineHash": "e06dd8f1fd2715c2"
+            "primaryLocationLineHash": "99f5d4f0665c1286"
           },
           "properties": {
             "mergesafe": {
-              "findingId": "ms-e06dd8f1fd2715c2",
-              "fingerprint": "e06dd8f1fd2715c2",
+              "findingId": "ms-99f5d4f0665c1286",
+              "fingerprint": "99f5d4f0665c1286",
               "severity": "medium",
               "confidence": "medium",
               "category": "integrity",
@@ -177,10 +177,10 @@
           }
         },
         {
-          "ruleId": "mergesafe.finding.80ef376eebb37b45",
+          "ruleId": "mergesafe.finding.c1e41f5fe8e2c434",
           "level": "error",
           "message": {
-            "text": "Destructive tools exposed without gating hints — Found by: mergesafe — Require explicit authorization/gating hints."
+            "text": "Destructive tools exposed without gating hints — Found by: mergesafe"
           },
           "locations": [
             {
@@ -196,12 +196,12 @@
             }
           ],
           "fingerprints": {
-            "primaryLocationLineHash": "80ef376eebb37b45"
+            "primaryLocationLineHash": "c1e41f5fe8e2c434"
           },
           "properties": {
             "mergesafe": {
-              "findingId": "ms-80ef376eebb37b45",
-              "fingerprint": "80ef376eebb37b45",
+              "findingId": "ms-c1e41f5fe8e2c434",
+              "fingerprint": "c1e41f5fe8e2c434",
               "severity": "high",
               "confidence": "medium",
               "category": "auth",
@@ -224,10 +224,10 @@
           }
         },
         {
-          "ruleId": "mergesafe.finding.d3a50c97926e67ec",
+          "ruleId": "mergesafe.finding.1dd7e517b754b249",
           "level": "warning",
           "message": {
-            "text": "Overly-broad OAuth scope patterns in config — Found by: mergesafe — Use least-privilege OAuth scopes."
+            "text": "Overly-broad OAuth scope patterns in config — Found by: mergesafe"
           },
           "locations": [
             {
@@ -243,12 +243,12 @@
             }
           ],
           "fingerprints": {
-            "primaryLocationLineHash": "d3a50c97926e67ec"
+            "primaryLocationLineHash": "1dd7e517b754b249"
           },
           "properties": {
             "mergesafe": {
-              "findingId": "ms-d3a50c97926e67ec",
-              "fingerprint": "d3a50c97926e67ec",
+              "findingId": "ms-1dd7e517b754b249",
+              "fingerprint": "1dd7e517b754b249",
               "severity": "medium",
               "confidence": "medium",
               "category": "auth",
@@ -269,10 +269,10 @@
           }
         },
         {
-          "ruleId": "mergesafe.finding.612c3eccde6fc28e",
+          "ruleId": "mergesafe.finding.cc9492a27784c1e8",
           "level": "warning",
           "message": {
-            "text": "Unsafe defaults (debug/allow-all) — Found by: mergesafe — Disable debug and tighten allow-lists."
+            "text": "Unsafe defaults (debug/allow-all) — Found by: mergesafe"
           },
           "locations": [
             {
@@ -288,12 +288,12 @@
             }
           ],
           "fingerprints": {
-            "primaryLocationLineHash": "612c3eccde6fc28e"
+            "primaryLocationLineHash": "cc9492a27784c1e8"
           },
           "properties": {
             "mergesafe": {
-              "findingId": "ms-612c3eccde6fc28e",
-              "fingerprint": "612c3eccde6fc28e",
+              "findingId": "ms-cc9492a27784c1e8",
+              "fingerprint": "cc9492a27784c1e8",
               "severity": "medium",
               "confidence": "medium",
               "category": "hardening",
@@ -314,10 +314,10 @@
           }
         },
         {
-          "ruleId": "mergesafe.finding.2e67d4836dd0e4e7",
+          "ruleId": "mergesafe.finding.bbe867373bae3191",
           "level": "error",
           "message": {
-            "text": "Missing auth middleware smell on HTTP MCP endpoints — Found by: mergesafe — Add auth middleware to MCP endpoints."
+            "text": "Missing auth middleware smell on HTTP MCP endpoints — Found by: mergesafe"
           },
           "locations": [
             {
@@ -333,12 +333,12 @@
             }
           ],
           "fingerprints": {
-            "primaryLocationLineHash": "2e67d4836dd0e4e7"
+            "primaryLocationLineHash": "bbe867373bae3191"
           },
           "properties": {
             "mergesafe": {
-              "findingId": "ms-2e67d4836dd0e4e7",
-              "fingerprint": "2e67d4836dd0e4e7",
+              "findingId": "ms-bbe867373bae3191",
+              "fingerprint": "bbe867373bae3191",
               "severity": "high",
               "confidence": "medium",
               "category": "auth",
@@ -359,10 +359,10 @@
           }
         },
         {
-          "ruleId": "mergesafe.finding.5bd074ebc5da1eab",
+          "ruleId": "mergesafe.finding.d2e7c54a396a643c",
           "level": "error",
           "message": {
-            "text": "Secrets or tokens likely logged or dumped — Found by: mergesafe — Redact secrets before logging."
+            "text": "Secrets or tokens likely logged or dumped — Found by: mergesafe"
           },
           "locations": [
             {
@@ -378,12 +378,12 @@
             }
           ],
           "fingerprints": {
-            "primaryLocationLineHash": "5bd074ebc5da1eab"
+            "primaryLocationLineHash": "d2e7c54a396a643c"
           },
           "properties": {
             "mergesafe": {
-              "findingId": "ms-5bd074ebc5da1eab",
-              "fingerprint": "5bd074ebc5da1eab",
+              "findingId": "ms-d2e7c54a396a643c",
+              "fingerprint": "d2e7c54a396a643c",
               "severity": "high",
               "confidence": "medium",
               "category": "secrets",
@@ -404,10 +404,10 @@
           }
         },
         {
-          "ruleId": "mergesafe.finding.ec0e1abd76e768c1",
+          "ruleId": "mergesafe.finding.31055677bb5bd72c",
           "level": "error",
           "message": {
-            "text": "Command execution from user-controlled input — Found by: mergesafe — Avoid shell execution; never pass request-derived data into process execution. Prefer allowlists, safe APIs, and strict input validation."
+            "text": "Command execution from user-controlled input — Found by: mergesafe"
           },
           "locations": [
             {
@@ -423,12 +423,12 @@
             }
           ],
           "fingerprints": {
-            "primaryLocationLineHash": "ec0e1abd76e768c1"
+            "primaryLocationLineHash": "31055677bb5bd72c"
           },
           "properties": {
             "mergesafe": {
-              "findingId": "ms-ec0e1abd76e768c1",
-              "fingerprint": "ec0e1abd76e768c1",
+              "findingId": "ms-31055677bb5bd72c",
+              "fingerprint": "31055677bb5bd72c",
               "severity": "critical",
               "confidence": "medium",
               "category": "injection",
@@ -450,10 +450,10 @@
           }
         },
         {
-          "ruleId": "mergesafe.finding.64eb5af5dd24a139",
+          "ruleId": "mergesafe.finding.333ca87956598cb9",
           "level": "error",
           "message": {
-            "text": "Filesystem write with user-controlled path — Found by: mergesafe — Use path normalization and allowlisted directories. Never write to arbitrary paths derived from requests or user input."
+            "text": "Filesystem write with user-controlled path — Found by: mergesafe"
           },
           "locations": [
             {
@@ -469,12 +469,12 @@
             }
           ],
           "fingerprints": {
-            "primaryLocationLineHash": "64eb5af5dd24a139"
+            "primaryLocationLineHash": "333ca87956598cb9"
           },
           "properties": {
             "mergesafe": {
-              "findingId": "ms-64eb5af5dd24a139",
-              "fingerprint": "64eb5af5dd24a139",
+              "findingId": "ms-333ca87956598cb9",
+              "fingerprint": "333ca87956598cb9",
               "severity": "high",
               "confidence": "medium",
               "category": "filesystem",
@@ -497,10 +497,10 @@
           }
         },
         {
-          "ruleId": "mergesafe.finding.ac2c6c4103be1395",
+          "ruleId": "mergesafe.finding.d26ea197d0dd55c5",
           "level": "error",
           "message": {
-            "text": "Network egress from tool handlers without allowlist — Found by: mergesafe — Enforce explicit egress allowlist."
+            "text": "Network egress from tool handlers without allowlist — Found by: mergesafe"
           },
           "locations": [
             {
@@ -516,12 +516,12 @@
             }
           ],
           "fingerprints": {
-            "primaryLocationLineHash": "ac2c6c4103be1395"
+            "primaryLocationLineHash": "d26ea197d0dd55c5"
           },
           "properties": {
             "mergesafe": {
-              "findingId": "ms-ac2c6c4103be1395",
-              "fingerprint": "ac2c6c4103be1395",
+              "findingId": "ms-d26ea197d0dd55c5",
+              "fingerprint": "d26ea197d0dd55c5",
               "severity": "high",
               "confidence": "medium",
               "category": "network",
@@ -543,10 +543,10 @@
           }
         },
         {
-          "ruleId": "mergesafe.finding.5cd712c991c679e7",
+          "ruleId": "mergesafe.finding.32dcd0e16deae65e",
           "level": "error",
           "message": {
-            "text": "Dynamic tool registration from untrusted input — Found by: mergesafe — Disallow dynamic tool registration from untrusted data."
+            "text": "Dynamic tool registration from untrusted input — Found by: mergesafe"
           },
           "locations": [
             {
@@ -562,12 +562,12 @@
             }
           ],
           "fingerprints": {
-            "primaryLocationLineHash": "5cd712c991c679e7"
+            "primaryLocationLineHash": "32dcd0e16deae65e"
           },
           "properties": {
             "mergesafe": {
-              "findingId": "ms-5cd712c991c679e7",
-              "fingerprint": "5cd712c991c679e7",
+              "findingId": "ms-32dcd0e16deae65e",
+              "fingerprint": "32dcd0e16deae65e",
               "severity": "critical",
               "confidence": "medium",
               "category": "integrity",
@@ -588,10 +588,10 @@
           }
         },
         {
-          "ruleId": "mergesafe.finding.071f50e90c002798",
+          "ruleId": "mergesafe.finding.90c4f520eadd96bb",
           "level": "error",
           "message": {
-            "text": "High-risk tool exposed without gating hints (auth/allowlist/approval) — Found by: mergesafe — Add explicit gating: authentication, authorization scopes, approvals/confirmations, and allowlists. Document constraints in tool metadata and enforce them in code."
+            "text": "High-risk tool exposed without gating hints (auth/allowlist/approval) — Found by: mergesafe"
           },
           "locations": [
             {
@@ -607,12 +607,12 @@
             }
           ],
           "fingerprints": {
-            "primaryLocationLineHash": "071f50e90c002798"
+            "primaryLocationLineHash": "90c4f520eadd96bb"
           },
           "properties": {
             "mergesafe": {
-              "findingId": "ms-071f50e90c002798",
-              "fingerprint": "071f50e90c002798",
+              "findingId": "ms-90c4f520eadd96bb",
+              "fingerprint": "90c4f520eadd96bb",
               "severity": "high",
               "confidence": "medium",
               "category": "auth",
@@ -636,10 +636,10 @@
           }
         },
         {
-          "ruleId": "mergesafe.finding.88d91634cdf553b7",
+          "ruleId": "mergesafe.finding.b6a962733aacb1f3",
           "level": "error",
           "message": {
-            "text": "Dangerous tool capability: arbitrary command execution exposed — Found by: mergesafe — Do not expose arbitrary command execution tools to untrusted callers. Remove shell execution, enforce strict allowlists, require strong auth + approvals, and sandbox execution."
+            "text": "Dangerous tool capability: arbitrary command execution exposed — Found by: mergesafe"
           },
           "locations": [
             {
@@ -655,12 +655,12 @@
             }
           ],
           "fingerprints": {
-            "primaryLocationLineHash": "88d91634cdf553b7"
+            "primaryLocationLineHash": "b6a962733aacb1f3"
           },
           "properties": {
             "mergesafe": {
-              "findingId": "ms-88d91634cdf553b7",
-              "fingerprint": "88d91634cdf553b7",
+              "findingId": "ms-b6a962733aacb1f3",
+              "fingerprint": "b6a962733aacb1f3",
               "severity": "critical",
               "confidence": "medium",
               "category": "injection",
@@ -683,10 +683,10 @@
           }
         },
         {
-          "ruleId": "mergesafe.finding.1360fd00404855b1",
+          "ruleId": "mergesafe.finding.09a517c58dd95a01",
           "level": "error",
           "message": {
-            "text": "Dangerous tool capability: arbitrary file read without allowlist — Found by: mergesafe — Restrict reads to allowlisted directories. Normalize paths, block absolute paths and traversal, enforce auth, and audit access."
+            "text": "Dangerous tool capability: arbitrary file read without allowlist — Found by: mergesafe"
           },
           "locations": [
             {
@@ -702,12 +702,12 @@
             }
           ],
           "fingerprints": {
-            "primaryLocationLineHash": "1360fd00404855b1"
+            "primaryLocationLineHash": "09a517c58dd95a01"
           },
           "properties": {
             "mergesafe": {
-              "findingId": "ms-1360fd00404855b1",
-              "fingerprint": "1360fd00404855b1",
+              "findingId": "ms-09a517c58dd95a01",
+              "fingerprint": "09a517c58dd95a01",
               "severity": "high",
               "confidence": "medium",
               "category": "filesystem",
@@ -731,10 +731,10 @@
           }
         },
         {
-          "ruleId": "mergesafe.finding.319d490d9b8b7c43",
+          "ruleId": "mergesafe.finding.2bf62b2b00f37456",
           "level": "error",
           "message": {
-            "text": "High-risk tool exposed without gating hints (auth/allowlist/approval) — Found by: mergesafe — Add explicit gating: authentication, authorization scopes, approvals/confirmations, and allowlists. Document constraints in tool metadata and enforce them in code."
+            "text": "High-risk tool exposed without gating hints (auth/allowlist/approval) — Found by: mergesafe"
           },
           "locations": [
             {
@@ -750,12 +750,12 @@
             }
           ],
           "fingerprints": {
-            "primaryLocationLineHash": "319d490d9b8b7c43"
+            "primaryLocationLineHash": "2bf62b2b00f37456"
           },
           "properties": {
             "mergesafe": {
-              "findingId": "ms-319d490d9b8b7c43",
-              "fingerprint": "319d490d9b8b7c43",
+              "findingId": "ms-2bf62b2b00f37456",
+              "fingerprint": "2bf62b2b00f37456",
               "severity": "high",
               "confidence": "medium",
               "category": "auth",
@@ -779,10 +779,10 @@
           }
         },
         {
-          "ruleId": "mergesafe.finding.138b022e0d56a62e",
+          "ruleId": "mergesafe.finding.065f0bddaf56dcef",
           "level": "error",
           "message": {
-            "text": "Dangerous tool capability: unrestricted network egress without allowlist — Found by: mergesafe — Enforce egress allowlists (hosts/schemes/ports). Block private/link-local ranges by default. Limit user-controlled headers. Require auth + approvals."
+            "text": "High-risk tool exposed without gating hints (auth/allowlist/approval) — Found by: mergesafe"
           },
           "locations": [
             {
@@ -798,12 +798,60 @@
             }
           ],
           "fingerprints": {
-            "primaryLocationLineHash": "138b022e0d56a62e"
+            "primaryLocationLineHash": "065f0bddaf56dcef"
           },
           "properties": {
             "mergesafe": {
-              "findingId": "ms-138b022e0d56a62e",
-              "fingerprint": "138b022e0d56a62e",
+              "findingId": "ms-065f0bddaf56dcef",
+              "fingerprint": "065f0bddaf56dcef",
+              "severity": "high",
+              "confidence": "medium",
+              "category": "auth",
+              "owaspMcpTop10": "MCP-A01",
+              "tags": [
+                "gating",
+                "gating-missing",
+                "policy",
+                "tool-manifest"
+              ],
+              "multiEngineConfirmed": false,
+              "engineSources": [
+                {
+                  "engineId": "mergesafe",
+                  "engineRuleId": "MS016",
+                  "engineSeverity": "high",
+                  "message": "High-risk tool exposed without gating hints (auth/allowlist/approval)"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "ruleId": "mergesafe.finding.3975848c2c8ad209",
+          "level": "error",
+          "message": {
+            "text": "Dangerous tool capability: unrestricted network egress without allowlist — Found by: mergesafe"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "fixtures/node-unsafe-server/tools-list.json"
+                },
+                "region": {
+                  "startLine": 31,
+                  "startColumn": 1
+                }
+              }
+            }
+          ],
+          "fingerprints": {
+            "primaryLocationLineHash": "3975848c2c8ad209"
+          },
+          "properties": {
+            "mergesafe": {
+              "findingId": "ms-3975848c2c8ad209",
+              "fingerprint": "3975848c2c8ad209",
               "severity": "high",
               "confidence": "medium",
               "category": "network",
@@ -827,58 +875,10 @@
           }
         },
         {
-          "ruleId": "mergesafe.finding.a5f2dd0088c83f7c",
+          "ruleId": "mergesafe.finding.428255fe13e67a3a",
           "level": "error",
           "message": {
-            "text": "High-risk tool exposed without gating hints (auth/allowlist/approval) — Found by: mergesafe — Add explicit gating: authentication, authorization scopes, approvals/confirmations, and allowlists. Document constraints in tool metadata and enforce them in code."
-          },
-          "locations": [
-            {
-              "physicalLocation": {
-                "artifactLocation": {
-                  "uri": "fixtures/node-unsafe-server/tools-list.json"
-                },
-                "region": {
-                  "startLine": 31,
-                  "startColumn": 1
-                }
-              }
-            }
-          ],
-          "fingerprints": {
-            "primaryLocationLineHash": "a5f2dd0088c83f7c"
-          },
-          "properties": {
-            "mergesafe": {
-              "findingId": "ms-a5f2dd0088c83f7c",
-              "fingerprint": "a5f2dd0088c83f7c",
-              "severity": "high",
-              "confidence": "medium",
-              "category": "auth",
-              "owaspMcpTop10": "MCP-A01",
-              "tags": [
-                "gating",
-                "gating-missing",
-                "policy",
-                "tool-manifest"
-              ],
-              "multiEngineConfirmed": false,
-              "engineSources": [
-                {
-                  "engineId": "mergesafe",
-                  "engineRuleId": "MS016",
-                  "engineSeverity": "high",
-                  "message": "High-risk tool exposed without gating hints (auth/allowlist/approval)"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "ruleId": "mergesafe.finding.becb87ca757d9347",
-          "level": "error",
-          "message": {
-            "text": "Dangerous tool behavior: token/secret logging helper present — Found by: mergesafe — Remove secret/token logging tools from production. If needed locally, gate behind build flags, redact outputs, and ensure secrets never reach logs."
+            "text": "Dangerous tool behavior: token/secret logging helper present — Found by: mergesafe"
           },
           "locations": [
             {
@@ -894,12 +894,12 @@
             }
           ],
           "fingerprints": {
-            "primaryLocationLineHash": "becb87ca757d9347"
+            "primaryLocationLineHash": "428255fe13e67a3a"
           },
           "properties": {
             "mergesafe": {
-              "findingId": "ms-becb87ca757d9347",
-              "fingerprint": "becb87ca757d9347",
+              "findingId": "ms-428255fe13e67a3a",
+              "fingerprint": "428255fe13e67a3a",
               "severity": "high",
               "confidence": "medium",
               "category": "secrets",

@@ -48,7 +48,11 @@ const runCli = (args: string[]): CliResult => {
 
   const res = hasExecPath
     ? spawnSync(process.execPath, [npmExecPath as string, '-C', 'packages/cli', 'dev', '--', ...args], opts)
-    : spawnSync(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['-C', 'packages/cli', 'dev', '--', ...args], opts);
+    : spawnSync(
+        process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
+        ['-C', 'packages/cli', 'dev', '--', ...args],
+        opts
+      );
 
   return {
     status: res.status,
@@ -142,6 +146,8 @@ describe('golden scan', () => {
   test('matches deterministic JSON and SARIF goldens', async () => {
     fs.rmSync(outDir, { recursive: true, force: true });
 
+    // IMPORTANT: use redact=true so committed goldens do NOT contain raw unsafe code excerpts
+    // that trigger GitHub Code Scanning alerts.
     const result = await runScan(fixture, {
       outDir,
       format: ['json', 'sarif'],
@@ -149,7 +155,7 @@ describe('golden scan', () => {
       timeout: 30,
       concurrency: 4,
       failOn: 'none',
-      redact: false,
+      redact: true,
       autoInstall: false,
       engines: ['mergesafe'],
       pathMode: 'relative',
@@ -162,7 +168,7 @@ describe('golden scan', () => {
       timeout: 30,
       concurrency: 4,
       failOn: 'none',
-      redact: false,
+      redact: true,
       autoInstall: false,
       engines: ['mergesafe'],
       pathMode: 'relative',
@@ -273,7 +279,6 @@ describe('help output', () => {
     expect(result.signal).toBeNull();
     expect(result.status).not.toBe(0);
 
-    // Depending on arg parsing / runtime, usage may land in stdout or stderr.
     const out = result.stderr + result.stdout;
     expect(out).toContain('Usage: mergesafe scan <path> [options]');
   });
