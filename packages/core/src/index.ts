@@ -111,12 +111,20 @@ export interface ScanResult {
  * Canonical engine IDs supported by MergeSafe.
  */
 export const AVAILABLE_ENGINES = ['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv', 'trivy'] as const;
+export type EngineId = (typeof AVAILABLE_ENGINES)[number];
 
 /**
  * Shared default engine list across CLI / Core / Action/docs.
  * Note: Engines may be SKIPPED when they cannot run (missing binary, no targets, etc).
  */
-export const DEFAULT_ENGINES = ['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv'] as const;
+export const DEFAULT_ENGINES: readonly EngineId[] = ['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv'];
+
+/**
+ * Type guard for narrowing user-provided strings to EngineId.
+ */
+export function isEngineId(v: string): v is EngineId {
+  return (AVAILABLE_ENGINES as readonly string[]).includes(v);
+}
 
 export type CiscoMode = 'auto' | 'static' | 'known-configs' | 'config' | 'remote' | 'stdio';
 
@@ -290,7 +298,8 @@ const ENGINE_PRIORITY: Record<string, number> = {
   trivy: 6,
 };
 
-const ENGINE_ID_TAGS = new Set(AVAILABLE_ENGINES);
+// ✅ IMPORTANT: Make this Set<string> so .has(string) is valid (fixes TS2345).
+const ENGINE_ID_TAGS: ReadonlySet<string> = new Set<string>(AVAILABLE_ENGINES);
 const GENERIC_TAGS = new Set(['mcp', 'node', 'javascript', 'typescript', 'python', 'security', 'scanner']);
 
 function normalizeTag(t: string): string {
@@ -327,7 +336,10 @@ function deriveFamilyKey(finding: Finding): string {
 
   const haystack = normalizeKeywordText(parts.filter(Boolean).join(' '));
 
-  if (/\b(command|cmd)\b/.test(haystack) && /\b(exec|execute|execution|shell|spawn|child process|childprocess)\b/.test(haystack)) {
+  if (
+    /\b(command|cmd)\b/.test(haystack) &&
+    /\b(exec|execute|execution|shell|spawn|child process|childprocess)\b/.test(haystack)
+  ) {
     return 'command-exec';
   }
   if (/\b(exec|execfile|execsync|spawn|spawnsync|child_process)\b/.test(haystack)) {
@@ -388,7 +400,7 @@ function deriveFamilyKey(finding: Finding): string {
 function mergeKeyForFinding(finding: Finding): string {
   const loc = finding.locations?.[0] ?? { filePath: 'unknown', line: 1 };
   const filePath = normalizePathForKey(loc.filePath);
-  const line = Number(loc.line ?? 1);
+  const line = Number((loc as any).line ?? 1);
 
   const family = deriveFamilyKey(finding);
   const category = normalizeTag(finding.category);
@@ -551,9 +563,7 @@ export function shouldFail(bySeverity: Record<Severity, number>, failOn: CliConf
 function gateReason(bySeverity: Record<Severity, number>, failOn: CliConfig['failOn']): string {
   if (failOn === 'none') return 'failOn=none (policy gate disabled)';
   if (failOn === 'critical') {
-    return bySeverity.critical > 0
-      ? `critical=${bySeverity.critical} (>0)`
-      : 'no critical findings';
+    return bySeverity.critical > 0 ? `critical=${bySeverity.critical} (>0)` : 'no critical findings';
   }
   // failOn=high
   if (bySeverity.critical > 0 || bySeverity.high > 0) {
