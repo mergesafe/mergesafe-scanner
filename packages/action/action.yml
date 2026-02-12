@@ -14,7 +14,7 @@ inputs:
     required: false
     default: 'high'
   engines:
-    description: 'Optional comma-separated engines list; defaults to mergesafe,semgrep,gitleaks,cisco,osv when omitted.'
+    description: 'Optional comma-separated engines list (e.g. include trivy); defaults to mergesafe,semgrep,gitleaks,cisco,osv when omitted.'
     required: false
     default: ''
   out_dir:

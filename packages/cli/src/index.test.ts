@@ -16,6 +16,7 @@ import {
   getHelpText,
 } from './index.js';
 import type { EngineAdapter } from '@mergesafe/engines';
+import { DEFAULT_ENGINES } from '@mergesafe/core';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = path.resolve(here, '../../../fixtures/node-unsafe-server');
@@ -121,7 +122,7 @@ describe('golden scan', () => {
 describe('option parsing utilities', () => {
   test('resolveConfig defaults engines to multi-engine and auto-install on', () => {
     const config = resolveConfig({});
-    expect(config.engines).toEqual(['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv']);
+    expect(config.engines).toEqual([...DEFAULT_ENGINES]);
     expect(config.autoInstall).toBe(true);
   });
 

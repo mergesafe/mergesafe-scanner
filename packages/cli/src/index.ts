@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import YAML from 'yaml';
-import { summarize, type CliConfig, type ScanResult } from '@mergesafe/core';
+import { DEFAULT_ENGINES, summarize, type CliConfig, type ScanResult } from '@mergesafe/core';
 import { runEngines, defaultAdapters, listEngines } from '@mergesafe/engines';
 import { generateHtmlReport, generateSummaryMarkdown } from '@mergesafe/report';
 import { mergeSarifRuns } from '@mergesafe/sarif';
@@ -286,11 +286,10 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
   const format = parsedFormats.filter((entry) => ALLOWED_FORMATS.has(entry as (typeof DEFAULT_FORMATS)[number]));
 
   // Engines list (default includes cisco unless user disables)
-  const defaultEngines = ['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv'];
   const enginesFromArgs = (opts.engines as string | undefined);
   const enginesFromCfg = (cfg.engines as string | string[] | undefined);
 
-  let engines = parseListOpt(enginesFromArgs ?? enginesFromCfg, defaultEngines);
+  let engines = parseListOpt(enginesFromArgs ?? enginesFromCfg, [...DEFAULT_ENGINES]);
 
   // --no-cisco force removal
   const noCisco = parseBooleanOpt(opts['no-cisco'] as any, false);
@@ -370,7 +369,7 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
 }
 
 export async function runScan(scanPath: string, config: CliConfigExt, adapters = defaultAdapters): Promise<ScanResult> {
-  const selected = config.engines ?? ['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv'];
+  const selected = config.engines ?? [...DEFAULT_ENGINES];
   const { findings, meta } = await runEngines({ scanPath, config }, selected, adapters);
   const summary = summarize(findings, config.failOn);
 

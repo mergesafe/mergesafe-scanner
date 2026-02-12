@@ -108,10 +108,15 @@ export interface ScanResult {
 }
 
 /**
- * Shared default engine list across CLI / Core / Engines.
+ * Canonical engine IDs supported by MergeSafe.
+ */
+export const AVAILABLE_ENGINES = ['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv', 'trivy'] as const;
+
+/**
+ * Shared default engine list across CLI / Core / Action/docs.
  * Note: Engines may be SKIPPED when they cannot run (missing binary, no targets, etc).
  */
-export const DEFAULT_ENGINES = ['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv', 'trivy'] as const;
+export const DEFAULT_ENGINES = ['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv'] as const;
 
 export type CiscoMode = 'auto' | 'static' | 'known-configs' | 'config' | 'remote' | 'stdio';
 
@@ -285,7 +290,7 @@ const ENGINE_PRIORITY: Record<string, number> = {
   trivy: 6,
 };
 
-const ENGINE_ID_TAGS = new Set(['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv', 'trivy']);
+const ENGINE_ID_TAGS = new Set(AVAILABLE_ENGINES);
 const GENERIC_TAGS = new Set(['mcp', 'node', 'javascript', 'typescript', 'python', 'security', 'scanner']);
 
 function normalizeTag(t: string): string {
