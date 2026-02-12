@@ -22,7 +22,7 @@ Generated outputs:
 - `mergesafe/results.sarif`
 - `mergesafe/report.html`
 
-Default engines are `mergesafe,semgrep,gitleaks,cisco,osv`. `trivy` is supported but optional via `--engines trivy` (or include it in a custom engines list). Missing engine binaries are auto-installed by default into `${HOME}/.mergesafe/tools` (override with `MERGESAFE_TOOLS_DIR`). Auto-install may download tools unless disabled with `--no-auto-install` or `--auto-install false`.
+Default engines are `mergesafe,semgrep,gitleaks,cisco,osv`. Optional supported engines (for example `trivy`) are **not** included unless you pass them via `--engines`. Missing engine binaries are auto-installed by default into `${HOME}/.mergesafe/tools` (override with `MERGESAFE_TOOLS_DIR`). Auto-install may download tools unless disabled with `--no-auto-install` or `--auto-install false`.
 
 ## Workspace packages
 
@@ -41,7 +41,7 @@ Default engines are `mergesafe,semgrep,gitleaks,cisco,osv`. `trivy` is supported
 - `--concurrency <n>`
 - `--fail-on critical|high|none` default `high`
 - `--config <path>` (optional YAML)
-- `--engines <csv|space-separated>` default `mergesafe,semgrep,gitleaks,cisco,osv`
+- `--engines <csv|space-separated>` default `mergesafe,semgrep,gitleaks,cisco,osv` (optional engines like `trivy` require explicit opt-in)
 - `--auto-install <true|false>` default `true`
 - `--no-auto-install` disable tool bootstrap
 - `--redact`
