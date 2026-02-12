@@ -48,8 +48,8 @@ describe('golden scan', () => {
     expect(result.findings.length).toBeGreaterThan(0);
 
     const md = fs.readFileSync(path.join(outDir, 'summary.md'), 'utf8');
-    expect(md).toContain('PASS');
-    expect(md).toContain('Grade');
+    expect(md).toContain('Scan: **Completed**');
+    expect(md).toContain('Risk grade:');
     expect(md).toContain('Top Findings');
   });
 

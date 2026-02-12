@@ -14,7 +14,7 @@ function mkFinding(engineId: string): Finding {
     category: 'test',
     owaspMcpTop10: 'MCP-A01',
     engineSources: [{ engineId, engineRuleId: 'RULE1', engineSeverity: 'high', message: 'Sample' }],
-    locations: [{ filePath: 'src/test.ts', line: 10 }],
+    locations: [{ filePath: 'src/test.ts', line: 10, column: 1 }],
     evidence: { excerpt: 'const token = "abc"', note: 'test' },
     remediation: 'Fix it',
     references: [],
@@ -24,7 +24,7 @@ function mkFinding(engineId: string): Finding {
 }
 
 describe('mergeSarifRuns', () => {
-  test('writes merged sarif with imported and generated runs', () => {
+  test('writes single merged sarif run for canonical findings', () => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sarif-merge-'));
     const engineSarifPath = path.join(outDir, 'semgrep.sarif');
     fs.writeFileSync(
@@ -49,8 +49,7 @@ describe('mergeSarifRuns', () => {
 
     expect(fs.existsSync(path.join(outDir, 'results.sarif'))).toBe(true);
     expect(Array.isArray(merged.runs)).toBe(true);
-    expect(merged.runs.length).toBe(2);
-    expect(merged.runs.find((run) => run.tool.driver.name === 'Semgrep')).toBeTruthy();
-    expect(merged.runs.find((run) => run.tool.driver.name === 'MergeSafe')).toBeTruthy();
+    expect(merged.runs.length).toBe(1);
+    expect(merged.runs[0]?.tool.driver.name).toBe('MergeSafe');
   });
 });

@@ -116,6 +116,9 @@ function sarifRuleIdForFinding(finding: Finding): string {
 
 function findingToSarifResultMerged(finding: Finding, redact: boolean): SarifResult {
   const location = finding.locations?.[0];
+  const artifactUri = toSarifUri(location?.filePath) ?? '.';
+  const startLine = location?.line ?? 1;
+  const startColumn = location?.column ?? 1;
   const engineIds = stableEngineIds(finding);
   const multi = engineIds.length > 1;
 
@@ -148,16 +151,14 @@ function findingToSarifResultMerged(finding: Finding, redact: boolean): SarifRes
     ruleId: sarifRuleIdForFinding(finding),
     level: toSarifLevel(finding.severity),
     message: { text: safeMessage },
-    locations: location
-      ? [
-          {
-            physicalLocation: {
-              artifactLocation: { uri: toSarifUri(location.filePath) },
-              region: { startLine: location.line ?? 1, startColumn: location.column },
-            },
-          },
-        ]
-      : undefined,
+    locations: [
+      {
+        physicalLocation: {
+          artifactLocation: { uri: artifactUri },
+          region: { startLine, startColumn },
+        },
+      },
+    ],
     fingerprints: { primaryLocationLineHash: finding.fingerprint },
     properties: props,
   };
