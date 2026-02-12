@@ -3,7 +3,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import YAML from 'yaml';
-import { DEFAULT_ENGINES, summarize, type CliConfig, type ScanResult } from '@mergesafe/core';
+import {
+  DEFAULT_ENGINES,
+  findRepoRoot,
+  normalizeOutputPath,
+  sortFindingsDeterministically,
+  summarize,
+  type CliConfig,
+  type PathMode,
+  type ScanResult,
+} from '@mergesafe/core';
 import { runEngines, defaultAdapters, listEngines } from '@mergesafe/engines';
 import { generateHtmlReport, generateSummaryMarkdown } from '@mergesafe/report';
 import { mergeSarifRuns } from '@mergesafe/sarif';
@@ -114,6 +123,7 @@ export function getHelpText(target: ParsedArgs['helpTarget'] = 'general'): strin
     '  --no-auto-install              Disable tool auto-install',
     '  --redact                       Redact sensitive fields in output',
     '  --no-cisco                     Remove Cisco engine from selected engines',
+    '  --path-mode <relative|absolute> Path style for outputs (default: relative)',
   ].join('\n');
 
   const listEngines = [
@@ -361,6 +371,10 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
           (opts['auto-install'] as string | boolean | undefined) ?? (cfg.autoInstall as boolean | undefined),
           true
         ),
+    pathMode: (((opts['path-mode'] as string | undefined) ?? (cfg.pathMode as string | undefined) ?? 'relative') ===
+      'absolute'
+      ? 'absolute'
+      : 'relative') as PathMode,
     engines,
 
     // Extra config consumed by adapters (Step 3)
@@ -369,26 +383,47 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
 }
 
 export async function runScan(scanPath: string, config: CliConfigExt, adapters = defaultAdapters): Promise<ScanResult> {
+  const pathMode = config.pathMode ?? 'relative';
+  const scanRoot = path.resolve(scanPath);
+  const repoRoot = findRepoRoot(scanRoot);
+  const pathBase = repoRoot ?? scanRoot;
+
   const selected = config.engines ?? [...DEFAULT_ENGINES];
   const { findings, meta } = await runEngines({ scanPath, config }, selected, adapters);
-  const summary = summarize(findings, config.failOn);
+
+  const normalizedFindings = sortFindingsDeterministically(
+    findings.map((finding) => ({
+      ...finding,
+      locations: (finding.locations ?? []).map((location) => ({
+        ...location,
+        filePath: normalizeOutputPath(location.filePath, pathBase, pathMode),
+      })),
+    }))
+  );
+
+  const summary = summarize(normalizedFindings, config.failOn, {
+    engines: (meta ?? []).slice().sort((a, b) => a.engineId.localeCompare(b.engineId)),
+  });
 
   return {
     meta: {
-      scannedPath: scanPath,
+      scannedPath: normalizeOutputPath(scanRoot, pathBase, pathMode),
       generatedAt: new Date().toISOString(),
       mode: config.mode,
       timeout: config.timeout,
       concurrency: config.concurrency,
       redacted: config.redact,
-      engines: meta,
+      engines: (meta ?? []).slice().sort((a, b) => a.engineId.localeCompare(b.engineId)),
     },
     summary,
-    findings,
+    findings: normalizedFindings,
     byEngine: Object.fromEntries(
-      meta.map((entry) => [
+      (meta ?? [])
+        .slice()
+        .sort((a, b) => a.engineId.localeCompare(b.engineId))
+        .map((entry) => [
         entry.engineId,
-        findings.filter((finding) => finding.engineSources.some((source) => source.engineId === entry.engineId)).length,
+        normalizedFindings.filter((finding) => finding.engineSources.some((source) => source.engineId === entry.engineId)).length,
       ])
     ),
   };
@@ -416,6 +451,7 @@ export function writeOutputs(result: ScanResult, config: CliConfigExt) {
       enginesMeta: result.meta.engines ?? [],
       canonicalFindings: result.findings,
       redact: result.meta.redacted,
+      uriBaseDir: process.cwd(),
     });
 
   return outDirAbs;

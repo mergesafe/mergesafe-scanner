@@ -51,9 +51,16 @@ function toSarifLevel(severity: string): SarifLevel {
 }
 
 // Keep URIs stable across Windows/macOS/Linux
-function toSarifUri(filePath: string | undefined): string {
+function toSarifUri(filePath: string | undefined, uriBaseDir?: string): string {
   if (!filePath || !filePath.trim()) return '.';
-  return filePath.replace(/\\/g, '/');
+  const normalized = filePath.replace(/\\/g, '/');
+  if (!uriBaseDir) return normalized;
+
+  const absBase = path.resolve(uriBaseDir);
+  const absPath = path.isAbsolute(filePath) ? path.resolve(filePath) : path.resolve(absBase, filePath);
+  const rel = path.relative(absBase, absPath);
+  if (!rel.startsWith('..') && !path.isAbsolute(rel)) return rel.replace(/\\/g, '/');
+  return normalized;
 }
 
 
@@ -144,7 +151,7 @@ function sarifRuleIdForFinding(finding: Finding): string {
   return `mergesafe.finding.${finding.fingerprint}`;
 }
 
-function findingToSarifResultMerged(finding: Finding, redact: boolean): SarifResult {
+function findingToSarifResultMerged(finding: Finding, redact: boolean, uriBaseDir?: string): SarifResult {
   const location = finding.locations?.[0];
   const engineIds = stableEngineIds(finding);
   const multi = engineIds.length > 1;
@@ -182,7 +189,7 @@ function findingToSarifResultMerged(finding: Finding, redact: boolean): SarifRes
       ? [
           {
             physicalLocation: {
-              artifactLocation: { uri: toSarifUri(location.filePath) },
+              artifactLocation: { uri: toSarifUri(location.filePath, uriBaseDir) },
               region: { startLine: Math.max(1, location.line ?? 1), startColumn: Math.max(1, location.column ?? 1) },
             },
           },
@@ -253,8 +260,9 @@ function mergedFindingsRun(args: {
   findings: Finding[];
   redact: boolean;
   enginesMeta?: EngineExecutionMeta[];
+  uriBaseDir?: string;
 }): SarifRun {
-  const { findings, redact, enginesMeta } = args;
+  const { findings, redact, enginesMeta, uriBaseDir } = args;
 
   const notes = engineStatusNotes(enginesMeta);
 
@@ -288,7 +296,7 @@ function mergedFindingsRun(args: {
     }
   }
 
-  const rules = Array.from(ruleMap.values());
+  const rules = Array.from(ruleMap.values()).sort((a, b) => a.id.localeCompare(b.id));
 
   return normalizeRun({
     tool: {
@@ -300,8 +308,17 @@ function mergedFindingsRun(args: {
     },
     results: [
       ...notes.results,
-      ...findings.map((f) => findingToSarifResultMerged(f, redact)),
-    ],
+      ...findings.map((f) => findingToSarifResultMerged(f, redact, uriBaseDir)),
+    ].sort((a, b) => {
+      const aUri = a.locations?.[0]?.physicalLocation?.artifactLocation?.uri ?? '';
+      const bUri = b.locations?.[0]?.physicalLocation?.artifactLocation?.uri ?? '';
+      const byUri = aUri.localeCompare(bUri);
+      if (byUri !== 0) return byUri;
+      const aLine = a.locations?.[0]?.physicalLocation?.region?.startLine ?? 0;
+      const bLine = b.locations?.[0]?.physicalLocation?.region?.startLine ?? 0;
+      if (aLine !== bLine) return aLine - bLine;
+      return String(a.ruleId).localeCompare(String(b.ruleId));
+    }),
   });
 }
 
@@ -310,8 +327,9 @@ export function mergeSarifRuns(args: {
   enginesMeta: EngineExecutionMeta[];
   canonicalFindings: Finding[];
   redact: boolean;
+  uriBaseDir?: string;
 }): SarifLog {
-  const { outDir, enginesMeta, canonicalFindings, redact } = args;
+  const { outDir, enginesMeta, canonicalFindings, redact, uriBaseDir } = args;
 
   // ✅ IMPORTANT: Output a single merged SARIF run so GitHub shows merged results, not duplicates per engine.
   const runs: SarifRun[] = [
@@ -319,6 +337,7 @@ export function mergeSarifRuns(args: {
       findings: canonicalFindings,
       redact,
       enginesMeta,
+      uriBaseDir,
     }),
   ];
 
@@ -342,6 +361,7 @@ export function toSarif(result: ScanResult): SarifLog {
         findings: result.findings,
         redact: result.meta.redacted,
         enginesMeta: result.meta.engines,
+        uriBaseDir: process.cwd(),
       }),
     ],
   };

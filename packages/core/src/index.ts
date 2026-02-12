@@ -1,5 +1,7 @@
 // packages/core/src/index.ts
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 export type Confidence = 'high' | 'medium' | 'low';
@@ -158,6 +160,7 @@ export interface CliConfig {
   failOn: 'critical' | 'high' | 'none';
   redact: boolean;
   autoInstall: boolean;
+  pathMode?: 'relative' | 'absolute';
   engines?: string[];
 
   /**
@@ -166,6 +169,8 @@ export interface CliConfig {
    */
   cisco?: CiscoConfig;
 }
+
+export type PathMode = 'relative' | 'absolute';
 
 export interface RawFinding {
   ruleId: string;
@@ -213,6 +218,46 @@ function normalizeSignalText(input: string): string {
 
 function normalizePathForKey(p: string): string {
   return String(p || '').replace(/\\/g, '/');
+}
+
+export function sortFindingsDeterministically(findings: Finding[]): Finding[] {
+  return [...findings].sort((a, b) => {
+    const sev = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity];
+    if (sev !== 0) return sev;
+
+    const aLoc = a.locations?.[0];
+    const bLoc = b.locations?.[0];
+    const file = String(aLoc?.filePath ?? '').localeCompare(String(bLoc?.filePath ?? ''));
+    if (file !== 0) return file;
+
+    const line = Number(aLoc?.line ?? 0) - Number(bLoc?.line ?? 0);
+    if (line !== 0) return line;
+
+    const findingId = String(a.findingId ?? '').localeCompare(String(b.findingId ?? ''));
+    if (findingId !== 0) return findingId;
+
+    return String(a.fingerprint ?? '').localeCompare(String(b.fingerprint ?? ''));
+  });
+}
+
+export function findRepoRoot(scanPath: string): string | undefined {
+  const start = path.resolve(scanPath);
+  const initialDir = fs.existsSync(start) && fs.statSync(start).isDirectory() ? start : path.dirname(start);
+
+  let current = initialDir;
+  while (true) {
+    if (fs.existsSync(path.join(current, '.git'))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+}
+
+export function normalizeOutputPath(filePath: string, baseDir: string, mode: PathMode): string {
+  const normalizedBase = path.resolve(baseDir);
+  const absolute = path.isAbsolute(filePath) ? path.resolve(filePath) : path.resolve(normalizedBase, filePath);
+  if (mode === 'absolute') return normalizePathForKey(absolute);
+  return normalizePathForKey(path.relative(normalizedBase, absolute) || '.');
 }
 
 export function findingFingerprint(filePath: string, line: number, signal: string): string {
@@ -538,20 +583,7 @@ export function mergeCanonicalFindings(findings: Finding[]): Finding[] {
     merged.push(mergedFinding);
   }
 
-  return merged.sort((a, b) => {
-    const sev = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity];
-    if (sev !== 0) return sev;
-
-    const aLoc = a.locations?.[0];
-    const bLoc = b.locations?.[0];
-    const fp = String(aLoc?.filePath ?? '').localeCompare(String(bLoc?.filePath ?? ''));
-    if (fp !== 0) return fp;
-
-    const ln = Number(aLoc?.line ?? 0) - Number(bLoc?.line ?? 0);
-    if (ln !== 0) return ln;
-
-    return String(a.title ?? '').localeCompare(String(b.title ?? ''));
-  });
+  return sortFindingsDeterministically(merged);
 }
 
 export function shouldFail(bySeverity: Record<Severity, number>, failOn: CliConfig['failOn']): boolean {

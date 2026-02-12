@@ -22,6 +22,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = path.resolve(here, '../../../fixtures/node-unsafe-server');
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mergesafe-test-golden-'));
 const repoRoot = path.resolve(here, '../../..');
+const goldenDir = path.resolve(here, '../testdata/goldens/node-unsafe-server');
 
 type CliResult = {
   status: number | null;
@@ -59,6 +60,26 @@ const runCli = (args: string[]): CliResult => {
 };
 
 describe('golden scan', () => {
+  function normalizeGoldenText(raw: string): string {
+    return raw.replace(/\r\n/g, '\n');
+  }
+
+  function sanitizeJsonGolden(raw: string): string {
+    const parsed = JSON.parse(normalizeGoldenText(raw));
+    parsed.meta.generatedAt = '<generatedAt>';
+    if (Array.isArray(parsed.meta.engines)) {
+      for (const engine of parsed.meta.engines) {
+        engine.durationMs = 0;
+      }
+    }
+    return `${JSON.stringify(parsed, null, 2)}\n`;
+  }
+
+  function sanitizeSarifGolden(raw: string): string {
+    const parsed = JSON.parse(normalizeGoldenText(raw));
+    return `${JSON.stringify(parsed, null, 2)}\n`;
+  }
+
   test('creates report structures and formats', async () => {
     fs.rmSync(outDir, { recursive: true, force: true });
 
@@ -117,6 +138,50 @@ describe('golden scan', () => {
     expect(result.summary.bySeverity.high + result.summary.bySeverity.critical).toBeGreaterThan(0);
     expect(result.summary.status).toBe('FAIL');
   });
+
+  test('matches deterministic JSON and SARIF goldens', async () => {
+    fs.rmSync(outDir, { recursive: true, force: true });
+
+    const result = await runScan(fixture, {
+      outDir,
+      format: ['json', 'sarif'],
+      mode: 'fast',
+      timeout: 30,
+      concurrency: 4,
+      failOn: 'none',
+      redact: false,
+      autoInstall: false,
+      engines: ['mergesafe'],
+      pathMode: 'relative',
+    });
+
+    writeOutputs(result, {
+      outDir,
+      format: ['json', 'sarif'],
+      mode: 'fast',
+      timeout: 30,
+      concurrency: 4,
+      failOn: 'none',
+      redact: false,
+      autoInstall: false,
+      engines: ['mergesafe'],
+      pathMode: 'relative',
+    });
+
+    const report = fs.readFileSync(path.join(outDir, 'report.json'), 'utf8');
+    const sarif = fs.readFileSync(path.join(outDir, 'results.sarif'), 'utf8');
+
+    const reportGolden = fs.readFileSync(path.join(goldenDir, 'report.json'), 'utf8');
+    const sarifGolden = fs.readFileSync(path.join(goldenDir, 'results.sarif'), 'utf8');
+
+    expect(sanitizeJsonGolden(report)).toBe(sanitizeJsonGolden(reportGolden));
+    expect(sanitizeSarifGolden(sarif)).toBe(sanitizeSarifGolden(sarifGolden));
+
+    expect(report).not.toContain('/tmp/');
+    expect(report).not.toMatch(/[A-Za-z]:\\/);
+    expect(sarif).not.toContain('/tmp/');
+    expect(sarif).not.toMatch(/[A-Za-z]:\\/);
+  });
 });
 
 describe('option parsing utilities', () => {
@@ -167,6 +232,7 @@ describe('help output', () => {
   test('getHelpText is deterministic and includes usage', () => {
     expect(getHelpText('general')).toContain('mergesafe --help');
     expect(getHelpText('scan')).toContain('mergesafe scan <path> [options]');
+    expect(getHelpText('scan')).toContain('--path-mode <relative|absolute>');
     expect(getHelpText('list-engines')).toContain('mergesafe --list-engines');
   });
 

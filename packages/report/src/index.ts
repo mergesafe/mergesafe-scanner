@@ -5,6 +5,20 @@ import type { Finding, ScanResult } from '@mergesafe/core';
 const severityRank: Record<Finding['severity'], number> = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
 const confidenceRank: Record<Finding['confidence'], number> = { high: 3, medium: 2, low: 1 };
 
+function findingOrder(a: Finding, b: Finding): number {
+  const sev = severityRank[b.severity] - severityRank[a.severity];
+  if (sev !== 0) return sev;
+  const aLoc = a.locations?.[0];
+  const bLoc = b.locations?.[0];
+  const file = String(aLoc?.filePath ?? '').localeCompare(String(bLoc?.filePath ?? ''));
+  if (file !== 0) return file;
+  const line = Number(aLoc?.line ?? 0) - Number(bLoc?.line ?? 0);
+  if (line !== 0) return line;
+  const findingId = String(a.findingId ?? '').localeCompare(String(b.findingId ?? ''));
+  if (findingId !== 0) return findingId;
+  return String(a.fingerprint ?? '').localeCompare(String(b.fingerprint ?? ''));
+}
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll('&', '&amp;')
@@ -15,13 +29,7 @@ function escapeHtml(value: string): string {
 }
 
 function topFindings(result: ScanResult): Finding[] {
-  return [...result.findings]
-    .sort(
-      (a, b) =>
-        severityRank[b.severity] - severityRank[a.severity] ||
-        confidenceRank[b.confidence] - confidenceRank[a.confidence]
-    )
-    .slice(0, 5);
+  return [...result.findings].sort((a, b) => findingOrder(a, b) || confidenceRank[b.confidence] - confidenceRank[a.confidence]).slice(0, 5);
 }
 
 function artifactHref(artifactPath?: string): string | undefined {
@@ -79,7 +87,7 @@ function engineNoteHtml(entry: NonNullable<ScanResult['meta']['engines']>[number
 }
 
 function engineLabelMap(result: ScanResult): Record<string, string> {
-  const engines = result.meta.engines ?? [];
+  const engines = (result.meta.engines ?? []).slice().sort((a, b) => a.engineId.localeCompare(b.engineId));
   const map: Record<string, string> = {};
   for (const e of engines) map[e.engineId] = e.displayName;
   return map;
@@ -190,7 +198,7 @@ function htmlHeaderBadges(result: ScanResult): string {
 }
 
 export function generateSummaryMarkdown(result: ScanResult): string {
-  const engines = result.meta.engines ?? [];
+  const engines = (result.meta.engines ?? []).slice().sort((a, b) => a.engineId.localeCompare(b.engineId));
 
   const engineRows = engines
     .map(
@@ -250,7 +258,7 @@ ${top || '- None'}
 }
 
 export function generateHtmlReport(result: ScanResult): string {
-  const engines = result.meta.engines ?? [];
+  const engines = (result.meta.engines ?? []).slice().sort((a, b) => a.engineId.localeCompare(b.engineId));
   const label = engineLabelMap(result);
 
   const engineRows = engines
@@ -278,7 +286,8 @@ export function generateHtmlReport(result: ScanResult): string {
     })
     .join('');
 
-  const rows = result.findings
+  const rows = [...result.findings]
+    .sort(findingOrder)
     .map((f, i) => {
       const ids = uniqueEngineIds(f);
       const names = ids.map((id) => label[id] ?? id);
