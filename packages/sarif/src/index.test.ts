@@ -24,7 +24,7 @@ function mkFinding(engineId: string): Finding {
 }
 
 describe('mergeSarifRuns', () => {
-  test('writes merged sarif with imported and generated runs', () => {
+  test('writes a single merged SARIF run generated from canonical findings', () => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sarif-merge-'));
     const engineSarifPath = path.join(outDir, 'semgrep.sarif');
     fs.writeFileSync(
@@ -49,8 +49,7 @@ describe('mergeSarifRuns', () => {
 
     expect(fs.existsSync(path.join(outDir, 'results.sarif'))).toBe(true);
     expect(Array.isArray(merged.runs)).toBe(true);
-    expect(merged.runs.length).toBe(2);
-    expect(merged.runs.find((run) => run.tool.driver.name === 'Semgrep')).toBeTruthy();
-    expect(merged.runs.find((run) => run.tool.driver.name === 'MergeSafe')).toBeTruthy();
+    expect(merged.runs.length).toBe(1);
+    expect(merged.runs[0]?.tool.driver.name).toBe('MergeSafe');
   });
 });
