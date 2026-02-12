@@ -24,7 +24,10 @@ jobs:
           path: .
           mode: fast
           fail_on: high
+          # engines: mergesafe,semgrep,gitleaks,cisco,osv
+          # fail_on: none
           out_dir: mergesafe
+          # out_dir: security/mergesafe
           upload_sarif: 'false'
           comment_pr: 'false'
 

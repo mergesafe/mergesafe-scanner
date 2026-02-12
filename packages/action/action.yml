@@ -1,5 +1,5 @@
 name: 'MergeSafe Scanner'
-description: 'Run MergeSafe scanner and optional engines (Semgrep, Gitleaks)'
+description: 'Run MergeSafe scanner with default engines (mergesafe, semgrep, gitleaks, cisco, osv) or a custom engines list'
 inputs:
   path:
     description: 'Path to scan (relative to repo root)'
@@ -14,7 +14,7 @@ inputs:
     required: false
     default: 'high'
   engines:
-    description: 'Optional comma-separated engines list; default scanner engines are used when omitted.'
+    description: 'Optional comma-separated engines list; defaults to mergesafe,semgrep,gitleaks,cisco,osv when omitted.'
     required: false
     default: ''
   out_dir:

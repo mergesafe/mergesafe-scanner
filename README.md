@@ -1,6 +1,6 @@
 # MergeSafe Scanner (V0 Core)
 
-Offline-first deterministic scanner for MCP server codebases.
+Offline-first deterministic scanner for MCP server codebases (local scan execution by default).
 
 ## Quickstart
 
@@ -22,7 +22,7 @@ Generated outputs:
 - `mergesafe/results.sarif`
 - `mergesafe/report.html`
 
-Default engines are `mergesafe,semgrep,gitleaks,cisco,osv`. `trivy` is supported but optional via `--engines trivy` (or include it in a custom engines list). Missing engine binaries are auto-installed by default into `${HOME}/.mergesafe/tools` (override with `MERGESAFE_TOOLS_DIR`).
+Default engines are `mergesafe,semgrep,gitleaks,cisco,osv`. `trivy` is supported but optional via `--engines trivy` (or include it in a custom engines list). Missing engine binaries are auto-installed by default into `${HOME}/.mergesafe/tools` (override with `MERGESAFE_TOOLS_DIR`). Auto-install may download tools unless disabled with `--no-auto-install` or `--auto-install false`.
 
 ## Workspace packages
 
@@ -69,5 +69,5 @@ Expected output files:
 
 - Default cache dir: `~/.mergesafe/tools`
 - Override cache dir: `MERGESAFE_TOOLS_DIR`
-- MergeSafe is offline-first: code is scanned locally and not uploaded by default.
+- MergeSafe is offline-first: code is scanned locally and not uploaded by default, but tool bootstrap may download engine binaries unless auto-install is disabled.
 - Remote analyzers (including LLM-backed analysis) are opt-in and OFF by default.

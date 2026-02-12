@@ -39,7 +39,13 @@ export type CliConfigExt = CliConfig & {
 };
 
 type OptValue = string | boolean | string[];
-type ParsedArgs = { scanPath?: string; opts: Record<string, OptValue>; command: 'scan' | 'list-engines' };
+type ParsedArgs = {
+  scanPath?: string;
+  opts: Record<string, OptValue>;
+  command: 'scan' | 'list-engines';
+  showHelp?: boolean;
+  helpTarget?: 'general' | 'scan' | 'list-engines';
+};
 
 const BOOLEAN_FLAGS = new Set([
   'list-engines',
@@ -69,11 +75,68 @@ function pushOpt(opts: Record<string, OptValue>, key: string, value: string) {
   opts[key] = [String(cur), value];
 }
 
-function parseArgs(argv: string[]): ParsedArgs {
+function hasHelpFlag(argv: string[]): boolean {
+  return argv.includes('--help') || argv.includes('-h');
+}
+
+export function getHelpText(target: ParsedArgs['helpTarget'] = 'general'): string {
+  const general = [
+    'MergeSafe CLI',
+    '',
+    'Usage:',
+    '  mergesafe scan <path> [options]',
+    '  mergesafe --list-engines',
+    '  mergesafe --help',
+    '',
+    'Commands:',
+    '  scan             Scan a project path and write outputs',
+    '  --list-engines   List available engines and versions',
+    '',
+    'Run `mergesafe scan --help` for scan options.',
+  ].join('\n');
+
+  const scan = [
+    'MergeSafe scan',
+    '',
+    'Usage:',
+    '  mergesafe scan <path> [options]',
+    '',
+    'Options:',
+    '  --out-dir <dir>                Output directory (default: mergesafe)',
+    '  --format <csv>                 Output formats (default: json,html,sarif,md)',
+    '  --mode <fast|deep>             Scan mode (default: fast)',
+    '  --timeout <seconds>            Per-engine timeout seconds (default: 30)',
+    '  --concurrency <n>              Engine concurrency (default: 4)',
+    '  --fail-on <critical|high|none> Fail threshold (default: high)',
+    '  --config <path>                Optional YAML config path',
+    '  --engines <list>               Comma/space-separated engines list',
+    '  --auto-install <true|false>    Auto-install missing tools (default: true)',
+    '  --no-auto-install              Disable tool auto-install',
+    '  --redact                       Redact sensitive fields in output',
+    '  --no-cisco                     Remove Cisco engine from selected engines',
+  ].join('\n');
+
+  const listEngines = [
+    'MergeSafe list engines',
+    '',
+    'Usage:',
+    '  mergesafe --list-engines',
+    '',
+    'Prints one line per engine as:',
+    '  <engineId>\tavailable=<true|false>\tversion=<version>\thint=<installHint>',
+  ].join('\n');
+
+  if (target === 'scan') return scan;
+  if (target === 'list-engines') return listEngines;
+  return general;
+}
+
+export function parseArgs(argv: string[]): ParsedArgs {
   const normalized = argv[0] === '--' ? argv.slice(1) : argv;
 
   // Support legacy: mergesafe --list-engines
   if (normalized.includes('--list-engines')) {
+    const showHelp = hasHelpFlag(normalized);
     const opts: Record<string, OptValue> = {};
     for (let i = 0; i < normalized.length; i++) {
       const token = normalized[i];
@@ -105,10 +168,35 @@ function parseArgs(argv: string[]): ParsedArgs {
       opts[key] = val;
       if (valueInline === undefined) i += 1;
     }
-    return { command: 'list-engines', opts };
+    return {
+      command: 'list-engines',
+      opts,
+      showHelp,
+      helpTarget: showHelp ? 'list-engines' : undefined,
+    };
   }
 
+  const showHelp = hasHelpFlag(normalized);
   const [command, scanPath, ...rest] = normalized;
+
+  if (showHelp) {
+    if (command === 'scan') {
+      return {
+        command: 'scan',
+        scanPath,
+        opts: {},
+        showHelp: true,
+        helpTarget: 'scan',
+      };
+    }
+    return {
+      command: 'scan',
+      opts: {},
+      showHelp: true,
+      helpTarget: 'general',
+    };
+  }
+
   if (command !== 'scan' || !scanPath) throw new Error('Usage: mergesafe scan <path> [options]');
 
   const opts: Record<string, OptValue> = {};
@@ -346,6 +434,12 @@ function resolveScanPath(inputPath: string): string {
 
 async function main() {
   const parsed = parseArgs(process.argv.slice(2));
+
+  if (parsed.showHelp) {
+    console.log(getHelpText(parsed.helpTarget));
+    return;
+  }
+
   const config = resolveConfig(parsed.opts);
 
   if (parsed.command === 'list-engines') {
