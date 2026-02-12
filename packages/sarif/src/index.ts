@@ -51,9 +51,39 @@ function toSarifLevel(severity: string): SarifLevel {
 }
 
 // Keep URIs stable across Windows/macOS/Linux
-function toSarifUri(filePath: string | undefined): string | undefined {
-  if (!filePath) return undefined;
+function toSarifUri(filePath: string | undefined): string {
+  if (!filePath || !filePath.trim()) return '.';
   return filePath.replace(/\\/g, '/');
+}
+
+
+function normalizeLocations(result: SarifResult): SarifResult['locations'] {
+  const fallback = [{
+    physicalLocation: {
+      artifactLocation: { uri: '.' },
+      region: { startLine: 1, startColumn: 1 },
+    },
+  }];
+
+  if (!result.locations || result.locations.length === 0) return fallback;
+
+  const normalized = result.locations.map((location) => {
+    const uri = location.physicalLocation?.artifactLocation?.uri?.trim()
+      ? location.physicalLocation.artifactLocation.uri
+      : '.';
+
+    const startLine = Math.max(1, location.physicalLocation?.region?.startLine ?? 1);
+    const startColumn = Math.max(1, location.physicalLocation?.region?.startColumn ?? 1);
+
+    return {
+      physicalLocation: {
+        artifactLocation: { uri },
+        region: { startLine, startColumn },
+      },
+    };
+  });
+
+  return normalized.length > 0 ? normalized : fallback;
 }
 
 function dedupeRules(rules: SarifRule[] | undefined): SarifRule[] | undefined {
@@ -144,7 +174,7 @@ function findingToSarifResultMerged(finding: Finding, redact: boolean): SarifRes
     },
   };
 
-  return {
+  const result: SarifResult = {
     ruleId: sarifRuleIdForFinding(finding),
     level: toSarifLevel(finding.severity),
     message: { text: safeMessage },
@@ -153,7 +183,7 @@ function findingToSarifResultMerged(finding: Finding, redact: boolean): SarifRes
           {
             physicalLocation: {
               artifactLocation: { uri: toSarifUri(location.filePath) },
-              region: { startLine: location.line ?? 1, startColumn: location.column },
+              region: { startLine: Math.max(1, location.line ?? 1), startColumn: Math.max(1, location.column ?? 1) },
             },
           },
         ]
@@ -161,14 +191,19 @@ function findingToSarifResultMerged(finding: Finding, redact: boolean): SarifRes
     fingerprints: { primaryLocationLineHash: finding.fingerprint },
     properties: props,
   };
+
+  result.locations = normalizeLocations(result);
+  return result;
 }
 
 function makeNoteResult(ruleId: string, text: string): SarifResult {
-  return {
+  const result: SarifResult = {
     ruleId,
     level: 'note',
     message: { text },
   };
+  result.locations = normalizeLocations(result);
+  return result;
 }
 
 function engineStatusNotes(enginesMeta: EngineExecutionMeta[] | undefined): { rules: SarifRule[]; results: SarifResult[] } {
