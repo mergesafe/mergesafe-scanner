@@ -25,6 +25,8 @@ interface SarifResult {
   properties?: Record<string, any>;
 }
 
+type SarifLocation = NonNullable<SarifResult['locations']>[number];
+
 interface SarifRun {
   tool: {
     driver: {
@@ -144,22 +146,45 @@ function findingToSarifResultMerged(finding: Finding, redact: boolean): SarifRes
     },
   };
 
+  const hasFileAndLine = Boolean(location?.filePath) && typeof location?.line === 'number';
+
   return {
     ruleId: sarifRuleIdForFinding(finding),
     level: toSarifLevel(finding.severity),
     message: { text: safeMessage },
-    locations: location
-      ? [
-          {
+    locations: [
+      hasFileAndLine
+        ? {
             physicalLocation: {
-              artifactLocation: { uri: toSarifUri(location.filePath) },
-              region: { startLine: location.line ?? 1, startColumn: location.column },
+              artifactLocation: { uri: toSarifUri(location?.filePath) },
+              region: { startLine: location?.line, startColumn: location?.column },
             },
-          },
-        ]
-      : undefined,
+          }
+        : fallbackLocation(),
+    ],
     fingerprints: { primaryLocationLineHash: finding.fingerprint },
     properties: props,
+  };
+}
+
+function fallbackLocation(): SarifLocation {
+  return {
+    physicalLocation: {
+      artifactLocation: { uri: '.' },
+      region: { startLine: 1, startColumn: 1 },
+    },
+  };
+}
+
+function ensureResultLocations(result: SarifResult): SarifResult {
+  const validLocations = (result.locations ?? []).filter((location) => {
+    const uri = location?.physicalLocation?.artifactLocation?.uri;
+    return typeof uri === 'string' && uri.trim().length > 0;
+  });
+
+  return {
+    ...result,
+    locations: validLocations.length > 0 ? validLocations : [fallbackLocation()],
   };
 }
 
@@ -168,6 +193,7 @@ function makeNoteResult(ruleId: string, text: string): SarifResult {
     ruleId,
     level: 'note',
     message: { text },
+    locations: [fallbackLocation()],
   };
 }
 
@@ -263,10 +289,7 @@ function mergedFindingsRun(args: {
         rules,
       },
     },
-    results: [
-      ...notes.results,
-      ...findings.map((f) => findingToSarifResultMerged(f, redact)),
-    ],
+    results: [...notes.results, ...findings.map((f) => findingToSarifResultMerged(f, redact))].map(ensureResultLocations),
   });
 }
 
