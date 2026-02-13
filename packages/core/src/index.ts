@@ -1,5 +1,6 @@
 // packages/core/src/index.ts
 import crypto from 'node:crypto';
+import path from 'node:path';
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 export type Confidence = 'high' | 'medium' | 'low';
@@ -149,6 +150,11 @@ export interface CiscoConfig {
   analyzers?: string;
 }
 
+/**
+ * PR4: Path normalization policy for outputs
+ */
+export type PathMode = 'relative' | 'absolute';
+
 export interface CliConfig {
   outDir: string;
   format: string[];
@@ -159,6 +165,19 @@ export interface CliConfig {
   redact: boolean;
   autoInstall: boolean;
   engines?: string[];
+
+  /**
+   * PR4: controls how file paths are written in outputs.
+   * - relative: repo-relative to scanRoot (default in CLI)
+   * - absolute: absolute machine paths
+   */
+  pathMode?: PathMode;
+
+  /**
+   * PR4: absolute scan root used to compute relative paths.
+   * Populated by CLI (scan target root).
+   */
+  scanRoot?: string;
 
   /**
    * Optional engine-specific config bag.
@@ -211,8 +230,75 @@ function normalizeSignalText(input: string): string {
     .slice(0, 500);
 }
 
+/**
+ * PR4: Normalize path for display/output keys (POSIX separators)
+ */
+export function toPosixPath(p: string): string {
+  return String(p ?? '').replace(/\\/g, '/');
+}
+
+/**
+ * Internal: normalize for stable key usage.
+ */
 function normalizePathForKey(p: string): string {
-  return String(p || '').replace(/\\/g, '/');
+  return toPosixPath(String(p || ''));
+}
+
+/**
+ * PR4: Convert a path into repo-relative or absolute form, then POSIX normalize.
+ * - scanRoot should be absolute (CLI provides)
+ * - if scanRoot is missing, fall back to POSIX-normalized original
+ */
+export function normalizePathForOutput(
+  filePath: string,
+  opts?: { scanRoot?: string; pathMode?: PathMode }
+): string {
+  const raw = String(filePath ?? '');
+  const scanRoot = opts?.scanRoot ? String(opts.scanRoot) : undefined;
+  const pathMode: PathMode = opts?.pathMode ?? 'relative';
+
+  if (!scanRoot) {
+    // Can't safely relativize without an anchor. Keep stable separators.
+    return toPosixPath(raw);
+  }
+
+  // Resolve both to absolute to reduce edge cases like '..' segments.
+  // Note: path.resolve is OS-specific; we convert to POSIX only at the end.
+  const absRoot = path.resolve(scanRoot);
+  const absFile = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(absRoot, raw);
+
+  if (pathMode === 'absolute') {
+    return toPosixPath(absFile);
+  }
+
+  // path.relative uses OS separators, then we normalize to POSIX.
+  let rel = path.relative(absRoot, absFile);
+
+  // Ensure a stable no-leading-dot convention.
+  rel = rel.replace(/^[.][\\/]/, '');
+
+  // If file is outside scanRoot, relative() will include '..'. Keep it (still deterministic),
+  // but normalize separators for display.
+  return toPosixPath(rel);
+}
+
+/**
+ * PR4: Apply path policy to all finding locations (without changing other fields).
+ * This is intended to be called once in CLI before writing outputs.
+ */
+export function normalizeFindingPaths(findings: Finding[], opts?: { scanRoot?: string; pathMode?: PathMode }): Finding[] {
+  const scanRoot = opts?.scanRoot;
+  const pathMode = opts?.pathMode;
+
+  return (findings ?? []).map((f) => {
+    const locs = (f.locations ?? []).map((l) => ({
+      ...l,
+      filePath: normalizePathForOutput(l.filePath, { scanRoot, pathMode }),
+    }));
+
+    // Important: fingerprint is already stable and engine-agnostic; do NOT recompute here.
+    return { ...f, locations: locs };
+  });
 }
 
 export function findingFingerprint(filePath: string, line: number, signal: string): string {
@@ -298,6 +384,64 @@ const ENGINE_PRIORITY: Record<string, number> = {
   trivy: 6,
 };
 
+/**
+ * PR4: stable sort helper for findings.
+ * Sort key chain:
+ *   severity(desc) -> confidence(desc) -> rule-ish/category -> filePath -> line -> column -> fingerprint -> title -> findingId
+ *
+ * NOTE: this returns a new array and does not mutate the input.
+ */
+export function stableSortFindings(findings: Finding[]): Finding[] {
+  const arr = [...(findings ?? [])];
+
+  arr.sort((a, b) => {
+    // severity DESC
+    const sev = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity];
+    if (sev !== 0) return sev;
+
+    // confidence DESC
+    const conf = CONFIDENCE_RANK[b.confidence] - CONFIDENCE_RANK[a.confidence];
+    if (conf !== 0) return conf;
+
+    // prefer mergesafe-first if everything else equal (helps determinism when merged)
+    const aEng = (a.engineSources?.[0]?.engineId ?? '').toLowerCase();
+    const bEng = (b.engineSources?.[0]?.engineId ?? '').toLowerCase();
+    const ap = ENGINE_PRIORITY[aEng] ?? 99;
+    const bp = ENGINE_PRIORITY[bEng] ?? 99;
+    if (ap !== bp) return ap - bp;
+
+    // category / title / owasp provide extra stability
+    const cat = String(a.category ?? '').localeCompare(String(b.category ?? ''));
+    if (cat !== 0) return cat;
+
+    const owasp = String(a.owaspMcpTop10 ?? '').localeCompare(String(b.owaspMcpTop10 ?? ''));
+    if (owasp !== 0) return owasp;
+
+    // location path/line/col
+    const aLoc = a.locations?.[0];
+    const bLoc = b.locations?.[0];
+    const fp = String(aLoc?.filePath ?? '').localeCompare(String(bLoc?.filePath ?? ''));
+    if (fp !== 0) return fp;
+
+    const ln = Number(aLoc?.line ?? 0) - Number(bLoc?.line ?? 0);
+    if (ln !== 0) return ln;
+
+    const col = Number(aLoc?.column ?? 0) - Number(bLoc?.column ?? 0);
+    if (col !== 0) return col;
+
+    // fingerprint, then title, then findingId
+    const fpa = String(a.fingerprint ?? '').localeCompare(String(b.fingerprint ?? ''));
+    if (fpa !== 0) return fpa;
+
+    const t = String(a.title ?? '').localeCompare(String(b.title ?? ''));
+    if (t !== 0) return t;
+
+    return String(a.findingId ?? '').localeCompare(String(b.findingId ?? ''));
+  });
+
+  return arr;
+}
+
 // ✅ IMPORTANT: Make this Set<string> so .has(string) is valid (fixes TS2345).
 const ENGINE_ID_TAGS: ReadonlySet<string> = new Set<string>(AVAILABLE_ENGINES);
 const GENERIC_TAGS = new Set(['mcp', 'node', 'javascript', 'typescript', 'python', 'security', 'scanner']);
@@ -353,7 +497,10 @@ function deriveFamilyKey(finding: Finding): string {
     return 'fs-read';
   }
 
-  if (/\b(file|filesystem|fs)\b/.test(haystack) && /\b(write|writefile|write-file|write_file|append|overwrite)\b/.test(haystack)) {
+  if (
+    /\b(file|filesystem|fs)\b/.test(haystack) &&
+    /\b(write|writefile|write-file|write_file|append|overwrite)\b/.test(haystack)
+  ) {
     return 'fs-write';
   }
 
