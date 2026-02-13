@@ -63,7 +63,6 @@ function mkOutDir(): string {
 }
 
 function normalizeEol(s: string): string {
-  // normalize CRLF/LF so the canonical JSON is OS-stable
   return s.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
@@ -84,7 +83,6 @@ function sanitizeReport(report: any) {
   const copy = JSON.parse(JSON.stringify(report));
 
   if (copy?.meta) {
-    // machine/time dependent
     delete copy.meta.generatedAt;
     delete copy.meta.scannedPath;
 
@@ -98,15 +96,13 @@ function sanitizeReport(report: any) {
     }
   }
 
-  // Ensure EOL is stable in any free-text fields
   if (typeof copy?.summary?.gate?.reason === 'string') {
     copy.summary.gate.reason = normalizeEol(copy.summary.gate.reason);
   }
 
   if (Array.isArray(copy?.findings)) {
     for (const f of copy.findings) {
-      // These are currently platform-sensitive (CRLF/LF hashing differences)
-      // We test determinism of IDs separately across repeated runs.
+      // platform-variant today (CRLF/LF etc). Keep separate determinism test.
       delete f.findingId;
       delete f.fingerprint;
 
@@ -124,6 +120,46 @@ function sanitizeReport(report: any) {
   return copy;
 }
 
+/**
+ * SARIF: canonicalize rule IDs that are derived from fingerprints (platform-variant),
+ * and rewrite results[].ruleId accordingly so goldens match on Windows + Linux.
+ */
+function canonicalizeSarifRuleIds(run: any) {
+  const driver = run?.tool?.driver;
+  const rules = driver?.rules;
+  if (!Array.isArray(rules) || rules.length === 0) return;
+
+  // Build a stable key from human-visible content (name/shortDescription).
+  // This preserves meaning while removing hash-derived IDs.
+  const entries = rules.map((r: any) => {
+    const name = String(r?.name ?? '');
+    const short = String(r?.shortDescription?.text ?? '');
+    const full = String(r?.fullDescription?.text ?? '');
+    return { r, key: `${name}::${short}::${full}` };
+  });
+
+  entries.sort((a: any, b: any) => a.key.localeCompare(b.key));
+
+  const idMap = new Map<string, string>();
+  for (let i = 0; i < entries.length; i++) {
+    const oldId = String(entries[i].r?.id ?? '');
+    const newId = `mergesafe.rule.${String(i + 1).padStart(4, '0')}`;
+    if (oldId) idMap.set(oldId, newId);
+    entries[i].r.id = newId;
+  }
+
+  // Rewrite results.ruleId to the new canonical IDs
+  if (Array.isArray(run?.results)) {
+    for (const res of run.results) {
+      const rid = String(res?.ruleId ?? '');
+      if (rid && idMap.has(rid)) res.ruleId = idMap.get(rid);
+    }
+  }
+
+  // Keep driver.rules in canonical order too
+  driver.rules = entries.map((e: any) => e.r);
+}
+
 function sanitizeSarif(sarif: any) {
   const copy = JSON.parse(JSON.stringify(sarif));
 
@@ -136,6 +172,9 @@ function sanitizeSarif(sarif: any) {
           delete inv?.endTimeUtc;
         }
       }
+
+      // Canonicalize hash-derived rule IDs (this is what was breaking Ubuntu vs Windows)
+      canonicalizeSarifRuleIds(run);
 
       // remove platform-sensitive fingerprints if present
       if (Array.isArray(run?.results)) {
@@ -171,7 +210,7 @@ function writeDeterministicJson(filePath: string, obj: any) {
   fs.writeFileSync(filePath, txt, 'utf8');
 }
 
-// NOTE: These are intentionally MUTABLE arrays because CliConfig expects string[]
+// ✅ MUTABLE array because CliConfig expects string[]
 const MERGESAFE_ONLY_ENGINES: string[] = ['mergesafe'];
 
 describe('golden scan', () => {
@@ -186,13 +225,12 @@ describe('golden scan', () => {
         format: ['json', 'sarif', 'md', 'html'] as const,
         mode: 'fast' as const,
         timeout: 30,
-        // keep deterministic everywhere even if CI clamps
         concurrency: 1,
         failOn: 'none' as const,
         redact: false,
         autoInstall: false,
         pathMode: 'relative' as const,
-        engines: [...MERGESAFE_ONLY_ENGINES], // ✅ string[]
+        engines: [...MERGESAFE_ONLY_ENGINES],
       };
 
       const result = await runScan(fixture, config);
@@ -207,7 +245,6 @@ describe('golden scan', () => {
       const report = JSON.parse(fs.readFileSync(path.join(outDir, 'report.json'), 'utf8'));
       expect(report?.summary?.scanStatus).toBeTruthy();
       expect(report?.summary?.gate?.status).toBeTruthy();
-      // back-compat alias must equal gate.status
       expect(report?.summary?.status).toBe(report?.summary?.gate?.status);
 
       const sarif = JSON.parse(fs.readFileSync(path.join(outDir, 'results.sarif'), 'utf8'));
@@ -240,7 +277,7 @@ describe('golden scan', () => {
         redact: false,
         autoInstall: false,
         pathMode: 'relative' as const,
-        engines: [...MERGESAFE_ONLY_ENGINES], // ✅ string[]
+        engines: [...MERGESAFE_ONLY_ENGINES],
       };
 
       const runA = await runScan(fixture, config);
@@ -278,7 +315,7 @@ describe('golden scan', () => {
         redact: false,
         autoInstall: false,
         pathMode: 'relative' as const,
-        engines: [...MERGESAFE_ONLY_ENGINES], // ✅ string[]
+        engines: [...MERGESAFE_ONLY_ENGINES],
       };
 
       const outA = mkOutDir();
@@ -317,14 +354,11 @@ describe('golden scan', () => {
         redact: false,
         autoInstall: false,
         pathMode: 'relative',
-        engines: [...MERGESAFE_ONLY_ENGINES], // ✅ string[]
+        engines: [...MERGESAFE_ONLY_ENGINES],
       });
 
       expect(result.summary.bySeverity.high + result.summary.bySeverity.critical).toBeGreaterThan(0);
-
-      // new canonical field
       expect(result.summary.gate.status).toBe('FAIL');
-      // back-compat alias must remain
       expect(result.summary.status).toBe('FAIL');
     },
     20000
