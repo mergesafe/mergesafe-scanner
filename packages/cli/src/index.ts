@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import YAML from 'yaml';
-import { DEFAULT_ENGINES, summarize, type CliConfig, type ScanResult } from '@mergesafe/core';
+import { DEFAULT_ENGINES, sortFindingsDeterministic, summarize, type CliConfig, type ScanResult } from '@mergesafe/core';
 import { runEngines, defaultAdapters, listEngines } from '@mergesafe/engines';
 import { generateHtmlReport, generateSummaryMarkdown } from '@mergesafe/report';
 import { mergeSarifRuns } from '@mergesafe/sarif';
@@ -114,6 +114,7 @@ export function getHelpText(target: ParsedArgs['helpTarget'] = 'general'): strin
     '  --no-auto-install              Disable tool auto-install',
     '  --redact                       Redact sensitive fields in output',
     '  --no-cisco                     Remove Cisco engine from selected engines',
+    '  --path-mode <relative|absolute> Output path mode (default: relative)',
   ].join('\n');
 
   const listEngines = [
@@ -250,14 +251,17 @@ export function normalizeOutDir(
   return pathLib.resolve(cwd, value);
 }
 
-export function parseListOpt(value: string | string[] | undefined, defaults: string[]): string[] {
-  const raw = Array.isArray(value) ? value.join(',') : value;
-  const parsed = (raw ?? '')
+export function parseListOpt(value: string | readonly string[] | undefined, defaults: readonly string[]): string[] {
+  let raw = '';
+  if (typeof value === 'string') raw = value;
+  else if (Array.isArray(value)) raw = value.join(',');
+
+  const parsed = raw
     .split(/[\s,]+/)
-    .map((entry) => entry.trim().toLowerCase())
+    .map((entry: string) => entry.trim().toLowerCase())
     .filter(Boolean);
   const deduped = [...new Set(parsed)];
-  return deduped.length ? deduped : defaults;
+  return deduped.length ? deduped : [...defaults];
 }
 
 function parseBooleanOpt(value: string | boolean | undefined, defaultValue: boolean): boolean {
@@ -280,7 +284,7 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
   const cfg = loadConfig(opts.config as string | undefined);
 
   const parsedFormats = parseListOpt(
-    (opts.format as string | undefined) ?? (cfg.format as string | string[] | undefined),
+    (opts.format as string | undefined) ?? (cfg.format as string | readonly string[] | undefined),
     [...DEFAULT_FORMATS]
   );
   const format = parsedFormats.filter((entry) => ALLOWED_FORMATS.has(entry as (typeof DEFAULT_FORMATS)[number]));
@@ -314,6 +318,9 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
   const ciscoStdioArgsRaw =
     (opts['cisco-stdio-arg'] as string | string[] | undefined) ??
     (cfg.cisco?.stdioArgs as unknown as string | string[] | undefined);
+
+  const pathModeRaw = String((opts['path-mode'] as string | undefined) ?? cfg.pathMode ?? 'relative').toLowerCase();
+  const pathMode: 'relative' | 'absolute' = pathModeRaw === 'absolute' ? 'absolute' : 'relative';
 
   const ciscoConfig: CiscoCliConfig = {
     enabled: ciscoEnabled,
@@ -350,6 +357,7 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
   return {
     outDir: normalizeOutDir((opts['out-dir'] as string) ?? cfg.outDir),
     format: format.length ? format : [...DEFAULT_FORMATS],
+    pathMode,
     mode: ((opts.mode as CliConfig['mode']) ?? cfg.mode ?? 'fast'),
     timeout: Number((opts.timeout as string) ?? cfg.timeout ?? 30),
     concurrency: Number((opts.concurrency as string) ?? cfg.concurrency ?? 4),
@@ -368,14 +376,47 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
   };
 }
 
+
+function toPosix(p: string): string {
+  return p.replaceAll('\\', '/');
+}
+
+function renderPath(filePath: string, scannedPath: string, mode: 'relative' | 'absolute'): string {
+  const abs = path.resolve(filePath);
+  if (mode === 'absolute') return toPosix(abs);
+  const rel = path.relative(path.resolve(scannedPath), abs);
+  if (!rel || rel.startsWith('..')) return toPosix(abs);
+  return toPosix(rel);
+}
+
+function applyPathMode(result: ScanResult, pathMode: 'relative' | 'absolute'): ScanResult {
+  const scannedPath = result.meta.scannedPath;
+  const findings = result.findings.map((finding) => ({
+    ...finding,
+    locations: (finding.locations ?? []).map((loc) => ({
+      ...loc,
+      filePath: renderPath(loc.filePath, scannedPath, pathMode),
+    })),
+  }));
+
+  return {
+    ...result,
+    meta: {
+      ...result.meta,
+      scannedPath: pathMode === 'relative' ? '.' : toPosix(path.resolve(scannedPath)),
+    },
+    findings: sortFindingsDeterministic(findings),
+  };
+}
+
 export async function runScan(scanPath: string, config: CliConfigExt, adapters = defaultAdapters): Promise<ScanResult> {
   const selected = config.engines ?? [...DEFAULT_ENGINES];
   const { findings, meta } = await runEngines({ scanPath, config }, selected, adapters);
   const summary = summarize(findings, config.failOn);
 
-  return {
+  const baseResult: ScanResult = {
     meta: {
-      scannedPath: scanPath,
+      scannedPath: path.resolve(scanPath),
       generatedAt: new Date().toISOString(),
       mode: config.mode,
       timeout: config.timeout,
@@ -384,7 +425,7 @@ export async function runScan(scanPath: string, config: CliConfigExt, adapters =
       engines: meta,
     },
     summary,
-    findings,
+    findings: sortFindingsDeterministic(findings),
     byEngine: Object.fromEntries(
       meta.map((entry) => [
         entry.engineId,
@@ -392,6 +433,8 @@ export async function runScan(scanPath: string, config: CliConfigExt, adapters =
       ])
     ),
   };
+
+  return applyPathMode(baseResult, config.pathMode ?? 'relative');
 }
 
 export function writeOutputs(result: ScanResult, config: CliConfigExt) {

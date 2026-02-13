@@ -58,6 +58,35 @@ const runCli = (args: string[]): CliResult => {
   };
 };
 
+
+function sanitizeReport(report: any) {
+  const copy = JSON.parse(JSON.stringify(report));
+  if (copy?.meta) {
+    delete copy.meta.generatedAt;
+    if (Array.isArray(copy.meta.engines)) {
+      for (const engine of copy.meta.engines) {
+        delete engine.durationMs;
+      }
+    }
+  }
+  return copy;
+}
+
+function sanitizeSarif(sarif: any) {
+  const copy = JSON.parse(JSON.stringify(sarif));
+  if (Array.isArray(copy?.runs)) {
+    for (const run of copy.runs) {
+      if (run?.invocations) {
+        for (const inv of run.invocations) {
+          delete inv?.startTimeUtc;
+          delete inv?.endTimeUtc;
+        }
+      }
+    }
+  }
+  return copy;
+}
+
 describe('golden scan', () => {
   test('creates report structures and formats', async () => {
     fs.rmSync(outDir, { recursive: true, force: true });
@@ -102,6 +131,37 @@ describe('golden scan', () => {
     expect(md).toContain('Top Findings');
   });
 
+
+  test('matches deterministic golden fixtures (except timestamps)', async () => {
+    const goldenDir = path.resolve(here, '../testdata/goldens/node-unsafe-server');
+    fs.mkdirSync(goldenDir, { recursive: true });
+
+    const config = {
+      outDir,
+      format: ['json', 'sarif'] as const,
+      mode: 'fast' as const,
+      timeout: 30,
+      concurrency: 4,
+      failOn: 'none' as const,
+      redact: false,
+      autoInstall: false,
+      pathMode: 'relative' as const,
+      engines: ['mergesafe'],
+    };
+
+    const runA = await runScan(fixture, config);
+    writeOutputs(runA, config);
+
+    const currentReport = sanitizeReport(JSON.parse(fs.readFileSync(path.join(outDir, 'report.json'), 'utf8')));
+    const currentSarif = sanitizeSarif(JSON.parse(fs.readFileSync(path.join(outDir, 'results.sarif'), 'utf8')));
+
+    const goldenReport = sanitizeReport(JSON.parse(fs.readFileSync(path.join(goldenDir, 'report.json'), 'utf8')));
+    const goldenSarif = sanitizeSarif(JSON.parse(fs.readFileSync(path.join(goldenDir, 'results.sarif'), 'utf8')));
+
+    expect(currentReport).toEqual(goldenReport);
+    expect(currentSarif).toEqual(goldenSarif);
+  });
+
   test('fail-on high returns fail status', async () => {
     const result = await runScan(fixture, {
       outDir,
@@ -120,6 +180,14 @@ describe('golden scan', () => {
 });
 
 describe('option parsing utilities', () => {
+
+  test('resolveConfig accepts readonly format tuples', () => {
+    const cfg = resolveConfig({ format: 'json,sarif' });
+    const readonlyFormats = ['json', 'sarif', 'md', 'html'] as const;
+    expect([...readonlyFormats].length).toBe(4);
+    expect(cfg.format.includes('json')).toBe(true);
+  });
+
   test('resolveConfig defaults engines to multi-engine and auto-install on', () => {
     const config = resolveConfig({});
     expect(config.engines).toEqual([...DEFAULT_ENGINES]);

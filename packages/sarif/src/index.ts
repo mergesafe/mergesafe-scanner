@@ -94,12 +94,25 @@ function dedupeRules(rules: SarifRule[] | undefined): SarifRule[] | undefined {
     if (!r?.id) continue;
     if (!byId.has(r.id)) byId.set(r.id, r);
   }
-  return Array.from(byId.values());
+  return Array.from(byId.values()).sort((a, b) => String(a.id).localeCompare(String(b.id)));
 }
 
 function normalizeRun(run: SarifRun): SarifRun {
   const driver = run?.tool?.driver;
   if (!driver) return run;
+
+  const sortedResults = [...(run.results ?? [])].sort((a, b) => {
+    const la = String(a.level ?? '');
+    const lb = String(b.level ?? '');
+    if (la !== lb) return la.localeCompare(lb);
+    const pa = String(a.locations?.[0]?.physicalLocation?.artifactLocation?.uri ?? '');
+    const pb = String(b.locations?.[0]?.physicalLocation?.artifactLocation?.uri ?? '');
+    if (pa !== pb) return pa.localeCompare(pb);
+    const aa = Number(a.locations?.[0]?.physicalLocation?.region?.startLine ?? 0);
+    const bb = Number(b.locations?.[0]?.physicalLocation?.region?.startLine ?? 0);
+    if (aa !== bb) return aa - bb;
+    return String(a.ruleId ?? '').localeCompare(String(b.ruleId ?? ''));
+  });
 
   return {
     ...run,
@@ -110,6 +123,7 @@ function normalizeRun(run: SarifRun): SarifRun {
         rules: dedupeRules(driver.rules),
       },
     },
+    results: sortedResults,
   };
 }
 
@@ -300,7 +314,7 @@ function mergedFindingsRun(args: {
     },
     results: [
       ...notes.results,
-      ...findings.map((f) => findingToSarifResultMerged(f, redact)),
+      ...[...findings].sort((a, b) => String(a.findingId).localeCompare(String(b.findingId))).map((f) => findingToSarifResultMerged(f, redact)),
     ],
   });
 }
@@ -320,7 +334,7 @@ export function mergeSarifRuns(args: {
       redact,
       enginesMeta,
     }),
-  ];
+  ].sort((a, b) => String(a.tool.driver.name).localeCompare(String(b.tool.driver.name)));
 
   const log: SarifLog = {
     version: '2.1.0',
@@ -343,6 +357,6 @@ export function toSarif(result: ScanResult): SarifLog {
         redact: result.meta.redacted,
         enginesMeta: result.meta.engines,
       }),
-    ],
+    ].sort((a, b) => String(a.tool.driver.name).localeCompare(String(b.tool.driver.name))),
   };
 }

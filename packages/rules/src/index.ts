@@ -31,6 +31,8 @@ const JS_EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
  * Keep this conservative: skip the obvious huge / generated folders.
  */
 const IGNORE_DIR_NAMES = new Set([
+  'mergesafe',
+  'mergesafe-test',
   "node_modules",
   ".git",
   "dist",
@@ -80,6 +82,26 @@ function shouldSkipDir(dirPath: string): boolean {
   return false;
 }
 
+
+const IGNORE_FILE_BASENAMES = new Set([
+  'report.json',
+  'results.sarif',
+  'summary.md',
+  'report.html',
+]);
+
+const IGNORE_SUBPATH_FRAGMENTS = [
+  'packages/cli/testdata/goldens/',
+  'packages/cli/mergesafe-test/',
+];
+
+function shouldSkipFile(filePath: string): boolean {
+  const norm = filePath.replaceAll('\\', '/').toLowerCase();
+  const base = path.basename(norm);
+  if (IGNORE_FILE_BASENAMES.has(base)) return true;
+  return IGNORE_SUBPATH_FRAGMENTS.some((fragment) => norm.includes(fragment));
+}
+
 function readTextSafe(p: string): string {
   try {
     return fs.readFileSync(p, "utf8");
@@ -117,6 +139,7 @@ function collectFiles(targetPath: string): FileInfo[] {
 
     const ext = path.extname(p).toLowerCase();
     if (!FILE_EXTS.includes(ext)) return;
+    if (shouldSkipFile(p)) return;
 
     const content = readTextSafe(p);
     out.push({ filePath: p, content, lines: content.split(/\r?\n/) });

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  findingFingerprint,
+  canonicalFingerprintInput,
   mergeCanonicalFindings,
   stableHash,
   type CliConfig,
@@ -306,8 +306,17 @@ function canonicalFinding(args: {
     tags: mergedTags,
   });
 
-  const signalKey = codes.join('|');
-  const fingerprint = findingFingerprint(normFilePath, args.line, signalKey);
+  const fingerprint = stableHash(
+    canonicalFingerprintInput({
+      filePath: normFilePath,
+      line: args.line,
+      ruleId: args.engineRuleId ?? args.engineId,
+      category: canonicalCategory(args.category, codes),
+      owaspMcpTop10: args.owaspMcpTop10 ?? inferOwaspFromCodes(codes, args.category),
+      title: args.title,
+      tags: codes,
+    })
+  );
 
   const evidenceHashMaterial = args.evidence?.trim()
     ? args.evidence
@@ -764,9 +773,26 @@ export class SemgrepAdapter implements EngineAdapter {
       PYTHONIOENCODING: 'utf-8',
     };
 
+    const excludeArgs = [
+      '--exclude',
+      'packages/cli/testdata/goldens',
+      '--exclude',
+      'packages/cli/mergesafe-test',
+      '--exclude',
+      'mergesafe',
+      '--exclude',
+      '**/report.json',
+      '--exclude',
+      '**/results.sarif',
+      '--exclude',
+      '**/summary.md',
+      '--exclude',
+      '**/report.html',
+    ];
+
     const runJson = await execFileAllowFailure(
       bin,
-      ['--config', configPath, '--json', '--output', jsonPath, ctx.scanPath],
+      ['--config', configPath, ...excludeArgs, '--json', '--output', jsonPath, ctx.scanPath],
       { maxBuffer: 30 * 1024 * 1024, env }
     );
 
@@ -787,7 +813,7 @@ export class SemgrepAdapter implements EngineAdapter {
       throw new Error(`Semgrep config error: ${msg}${where ? ` (${where})` : ''}`);
     }
 
-    await execFileAllowFailure(bin, ['--config', configPath, '--sarif', '--output', sarifPath, ctx.scanPath], {
+    await execFileAllowFailure(bin, ['--config', configPath, ...excludeArgs, '--sarif', '--output', sarifPath, ctx.scanPath], {
       maxBuffer: 30 * 1024 * 1024,
       env,
     });

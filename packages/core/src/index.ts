@@ -151,7 +151,8 @@ export interface CiscoConfig {
 
 export interface CliConfig {
   outDir: string;
-  format: string[];
+  format: readonly string[];
+  pathMode?: 'relative' | 'absolute';
   mode: 'fast' | 'deep';
   timeout: number;
   concurrency: number;
@@ -219,6 +220,30 @@ export function findingFingerprint(filePath: string, line: number, signal: strin
   const fpPath = normalizePathForKey(filePath);
   const sig = normalizeSignalText(signal);
   return stableHash(`${fpPath}:${lineBucket(line)}:${stableHash(sig)}`);
+}
+
+export function canonicalFingerprintInput(args: {
+  filePath: string;
+  line: number;
+  ruleId?: string;
+  category?: string;
+  owaspMcpTop10?: string;
+  title?: string;
+  tags?: readonly string[];
+}): string {
+  const normalizedTags = [...new Set((args.tags ?? []).map((t) => normalizeTag(t)).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b)
+  );
+
+  return [
+    normalizePathForKey(args.filePath),
+    String(lineBucket(args.line)),
+    normalizeTag(args.ruleId ?? ''),
+    normalizeTag(args.category ?? ''),
+    normalizeTag(args.owaspMcpTop10 ?? ''),
+    normalizeKeywordText(args.title ?? ''),
+    normalizedTags.join(','),
+  ].join('|');
 }
 
 const SEVERITY_RANK: Record<Severity, number> = {
@@ -412,11 +437,19 @@ function mergeKeyForFinding(finding: Finding): string {
 export function toFinding(raw: RawFinding, redact: boolean): Finding {
   const snippetHash = stableHash(raw.evidence);
 
-  const signal = [raw.ruleId, raw.category, raw.owaspMcpTop10, ...(raw.tags ?? []), raw.title].filter(Boolean).join('|');
-  const fingerprint = findingFingerprint(raw.filePath, raw.line, signal);
+  const canonicalInput = canonicalFingerprintInput({
+    filePath: raw.filePath,
+    line: raw.line,
+    ruleId: raw.ruleId,
+    category: raw.category,
+    owaspMcpTop10: raw.owaspMcpTop10,
+    title: raw.title,
+    tags: raw.tags,
+  });
+  const fingerprint = stableHash(canonicalInput);
 
   return {
-    findingId: `${raw.ruleId}-${fingerprint}`,
+    findingId: `ms-${fingerprint}`,
     title: raw.title,
     severity: raw.severity,
     confidence: raw.confidence,
@@ -428,10 +461,49 @@ export function toFinding(raw: RawFinding, redact: boolean): Finding {
       ? { excerptHash: snippetHash, note: 'Redacted evidence' }
       : { excerpt: raw.evidence, note: 'Static pattern match' },
     remediation: raw.remediation,
-    references: raw.references,
-    tags: raw.tags,
+    references: [...(raw.references ?? [])].sort((a, b) => a.localeCompare(b)),
+    tags: [...(raw.tags ?? [])].sort((a, b) => a.localeCompare(b)),
     fingerprint,
   };
+}
+
+export function sortFindingsDeterministic(findings: Finding[]): Finding[] {
+  const normalized = findings.map((f) => ({
+    ...f,
+    engineSources: [...(f.engineSources ?? [])].sort((a, b) => {
+      const e = String(a.engineId).localeCompare(String(b.engineId));
+      if (e !== 0) return e;
+      const r = String(a.engineRuleId ?? '').localeCompare(String(b.engineRuleId ?? ''));
+      if (r !== 0) return r;
+      return String(a.message ?? '').localeCompare(String(b.message ?? ''));
+    }),
+    tags: [...new Set((f.tags ?? []).map((t) => String(t).trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    references: [...new Set((f.references ?? []).map((r) => String(r).trim()).filter(Boolean))].sort((a, b) =>
+      a.localeCompare(b)
+    ),
+    locations: [...(f.locations ?? [])].sort((a, b) => {
+      const p = String(a.filePath).localeCompare(String(b.filePath));
+      if (p !== 0) return p;
+      const l = Number(a.line ?? 0) - Number(b.line ?? 0);
+      if (l !== 0) return l;
+      return Number(a.column ?? 0) - Number(b.column ?? 0);
+    }),
+  }));
+
+  return normalized.sort((a, b) => {
+    const sev = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity];
+    if (sev !== 0) return sev;
+
+    const aLoc = a.locations?.[0];
+    const bLoc = b.locations?.[0];
+    const fp = String(aLoc?.filePath ?? '').localeCompare(String(bLoc?.filePath ?? ''));
+    if (fp !== 0) return fp;
+
+    const ln = Number(aLoc?.line ?? 0) - Number(bLoc?.line ?? 0);
+    if (ln !== 0) return ln;
+
+    return String(a.findingId ?? '').localeCompare(String(b.findingId ?? ''));
+  });
 }
 
 export function dedupeFindings(rawFindings: RawFinding[], redact: boolean): Finding[] {
@@ -538,20 +610,7 @@ export function mergeCanonicalFindings(findings: Finding[]): Finding[] {
     merged.push(mergedFinding);
   }
 
-  return merged.sort((a, b) => {
-    const sev = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity];
-    if (sev !== 0) return sev;
-
-    const aLoc = a.locations?.[0];
-    const bLoc = b.locations?.[0];
-    const fp = String(aLoc?.filePath ?? '').localeCompare(String(bLoc?.filePath ?? ''));
-    if (fp !== 0) return fp;
-
-    const ln = Number(aLoc?.line ?? 0) - Number(bLoc?.line ?? 0);
-    if (ln !== 0) return ln;
-
-    return String(a.title ?? '').localeCompare(String(b.title ?? ''));
-  });
+  return sortFindingsDeterministic(merged);
 }
 
 export function shouldFail(bySeverity: Record<Severity, number>, failOn: CliConfig['failOn']): boolean {

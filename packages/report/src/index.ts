@@ -16,10 +16,12 @@ function escapeHtml(value: string): string {
 
 function topFindings(result: ScanResult): Finding[] {
   return [...result.findings]
-    .sort(
-      (a, b) =>
-        severityRank[b.severity] - severityRank[a.severity] ||
-        confidenceRank[b.confidence] - confidenceRank[a.confidence]
+    .sort((a, b) =>
+      severityRank[b.severity] - severityRank[a.severity] ||
+      confidenceRank[b.confidence] - confidenceRank[a.confidence] ||
+      String(a.locations?.[0]?.filePath ?? '').localeCompare(String(b.locations?.[0]?.filePath ?? '')) ||
+      Number(a.locations?.[0]?.line ?? 0) - Number(b.locations?.[0]?.line ?? 0) ||
+      String(a.findingId).localeCompare(String(b.findingId))
     )
     .slice(0, 5);
 }
@@ -278,7 +280,8 @@ export function generateHtmlReport(result: ScanResult): string {
     })
     .join('');
 
-  const rows = result.findings
+  const rows = [...result.findings]
+    .sort((a, b) => String(a.findingId).localeCompare(String(b.findingId)))
     .map((f, i) => {
       const ids = uniqueEngineIds(f);
       const names = ids.map((id) => label[id] ?? id);
