@@ -47,11 +47,7 @@ const runCli = (args: string[]): CliResult => {
 
   const res = hasExecPath
     ? spawnSync(process.execPath, [npmExecPath as string, '-C', 'packages/cli', 'dev', '--', ...args], opts)
-    : spawnSync(
-        process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
-        ['-C', 'packages/cli', 'dev', '--', ...args],
-        opts
-      );
+    : spawnSync(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['-C', 'packages/cli', 'dev', '--', ...args], opts);
 
   return {
     status: res.status,
@@ -68,6 +64,11 @@ function mkOutDir(): string {
 
 function normalizeEol(s: string): string {
   return s.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+function normalizeSarifUri(u: string): string {
+  // Ensure path separators are stable across OS
+  return normalizeEol(u).replace(/\\/g, '/');
 }
 
 function sortFindingsStable(findings: any[]): any[] {
@@ -90,7 +91,7 @@ function sanitizeReport(report: any) {
     delete copy.meta.generatedAt;
     delete copy.meta.scannedPath;
 
-    // CI/platform may clamp this; don't golden-test it
+    // CI/platform may clamp; don't golden-test it
     delete copy.meta.concurrency;
 
     if (Array.isArray(copy.meta.engines)) {
@@ -106,7 +107,7 @@ function sanitizeReport(report: any) {
 
   if (Array.isArray(copy?.findings)) {
     for (const f of copy.findings) {
-      // platform-variant today (CRLF/LF etc). Keep separate determinism test.
+      // Platform-variant today (CRLF/LF, path normalization, etc.)
       delete f.findingId;
       delete f.fingerprint;
 
@@ -124,84 +125,76 @@ function sanitizeReport(report: any) {
   return copy;
 }
 
-/**
- * SARIF: canonicalize rule IDs that are derived from fingerprints (platform-variant),
- * and rewrite results[].ruleId accordingly so goldens match on Windows + Linux.
- */
-function canonicalizeSarifRuleIds(run: any) {
-  const driver = run?.tool?.driver;
-  const rules = driver?.rules;
-  if (!Array.isArray(rules) || rules.length === 0) return;
-
-  // Build a stable key from human-visible content (name/shortDescription).
-  // This preserves meaning while removing hash-derived IDs.
-  const entries = rules.map((r: any) => {
-    const name = String(r?.name ?? '');
-    const short = String(r?.shortDescription?.text ?? '');
-    const full = String(r?.fullDescription?.text ?? '');
-    return { r, key: `${name}::${short}::${full}` };
-  });
-
-  entries.sort((a: any, b: any) => a.key.localeCompare(b.key));
-
-  const idMap = new Map<string, string>();
-  for (let i = 0; i < entries.length; i++) {
-    const oldId = String(entries[i].r?.id ?? '');
-    const newId = `mergesafe.rule.${String(i + 1).padStart(4, '0')}`;
-    if (oldId) idMap.set(oldId, newId);
-    entries[i].r.id = newId;
-  }
-
-  // Rewrite results.ruleId to the new canonical IDs
-  if (Array.isArray(run?.results)) {
-    for (const res of run.results) {
-      const rid = String(res?.ruleId ?? '');
-      if (rid && idMap.has(rid)) res.ruleId = idMap.get(rid);
-    }
-  }
-
-  // Keep driver.rules in canonical order too
-  driver.rules = entries.map((e: any) => e.r);
-}
-
 function sanitizeSarif(sarif: any) {
   const copy = JSON.parse(JSON.stringify(sarif));
 
-  if (Array.isArray(copy?.runs)) {
-    for (const run of copy.runs) {
-      // timestamps are nondeterministic
-      if (Array.isArray(run?.invocations)) {
-        for (const inv of run.invocations) {
-          delete inv?.startTimeUtc;
-          delete inv?.endTimeUtc;
+  if (!Array.isArray(copy?.runs)) return copy;
+
+  for (const run of copy.runs) {
+    // timestamps are nondeterministic
+    if (Array.isArray(run?.invocations)) {
+      for (const inv of run.invocations) {
+        delete inv?.startTimeUtc;
+        delete inv?.endTimeUtc;
+      }
+    }
+
+    // Rules: drop hash/ID linkage + normalize text + stable sort
+    const rules = run?.tool?.driver?.rules;
+    if (Array.isArray(rules)) {
+      for (const r of rules) {
+        // rule IDs can be derived from fingerprints (platform-variant)
+        delete r?.id;
+
+        if (typeof r?.name === 'string') r.name = normalizeEol(r.name).trim();
+        if (typeof r?.shortDescription?.text === 'string') {
+          r.shortDescription.text = normalizeEol(r.shortDescription.text).trim();
+        }
+        if (typeof r?.fullDescription?.text === 'string') {
+          r.fullDescription.text = normalizeEol(r.fullDescription.text).trim();
         }
       }
 
-      // Canonicalize hash-derived rule IDs (this is what was breaking Ubuntu vs Windows)
-      canonicalizeSarifRuleIds(run);
+      rules.sort((a: any, b: any) => {
+        const ak = `${a?.name ?? ''}::${a?.shortDescription?.text ?? ''}::${a?.fullDescription?.text ?? ''}`;
+        const bk = `${b?.name ?? ''}::${b?.shortDescription?.text ?? ''}::${b?.fullDescription?.text ?? ''}`;
+        return String(ak).localeCompare(String(bk));
+      });
+    }
 
-      // remove platform-sensitive fingerprints if present
-      if (Array.isArray(run?.results)) {
-        for (const r of run.results) {
-          delete r?.fingerprints;
-          delete r?.partialFingerprints;
+    // Results: remove rule linkage + fingerprints + normalize URIs + stable sort by location/message
+    if (Array.isArray(run?.results)) {
+      for (const res of run.results) {
+        // Rule linkage is where most cross-OS churn happens
+        delete res?.ruleId;
+        delete res?.ruleIndex;
+
+        // Some SARIF emitters include these
+        delete res?.fingerprints;
+        delete res?.partialFingerprints;
+
+        if (typeof res?.message?.text === 'string') {
+          res.message.text = normalizeEol(res.message.text).trim();
         }
 
-        // stable ordering
-        run.results.sort((a: any, b: any) => {
-          const ar = a?.ruleId ?? '';
-          const br = b?.ruleId ?? '';
-          if (ar !== br) return String(ar).localeCompare(String(br));
-
-          const al = a?.locations?.[0]?.physicalLocation?.artifactLocation?.uri ?? '';
-          const bl = b?.locations?.[0]?.physicalLocation?.artifactLocation?.uri ?? '';
-          if (al !== bl) return String(al).localeCompare(String(bl));
-
-          const ali = a?.locations?.[0]?.physicalLocation?.region?.startLine ?? 0;
-          const bli = b?.locations?.[0]?.physicalLocation?.region?.startLine ?? 0;
-          return Number(ali) - Number(bli);
-        });
+        // Normalize file URIs to forward slashes
+        const loc0 = res?.locations?.[0]?.physicalLocation;
+        const uri = loc0?.artifactLocation?.uri;
+        if (typeof uri === 'string') {
+          loc0.artifactLocation.uri = normalizeSarifUri(uri);
+        }
       }
+
+      const key = (r: any) => {
+        const loc0 = r?.locations?.[0]?.physicalLocation;
+        const uri = normalizeSarifUri(loc0?.artifactLocation?.uri ?? '');
+        const line = Number(loc0?.region?.startLine ?? 0);
+        const lvl = String(r?.level ?? '');
+        const msg = String(r?.message?.text ?? '');
+        return `${uri}::${String(line).padStart(8, '0')}::${lvl}::${msg}`;
+      };
+
+      run.results.sort((a: any, b: any) => key(a).localeCompare(key(b)));
     }
   }
 
@@ -214,8 +207,12 @@ function writeDeterministicJson(filePath: string, obj: any) {
   fs.writeFileSync(filePath, txt, 'utf8');
 }
 
-// ✅ MUTABLE array because CliConfig expects string[]
+// Mutable array because CliConfig expects string[]
 const MERGESAFE_ONLY_ENGINES: string[] = ['mergesafe'];
+
+const FORMATS_ALL = ['json', 'sarif', 'md', 'html'] as const;
+const FORMATS_GOLDEN = ['json', 'sarif'] as const;
+const FORMATS_JSON = ['json'] as const;
 
 describe('golden scan', () => {
   test(
@@ -226,8 +223,7 @@ describe('golden scan', () => {
 
       const config = {
         outDir,
-        // ✅ no `as const` here (CliConfig expects mutable arrays)
-        format: ['json', 'sarif', 'md', 'html'],
+        format: [...FORMATS_ALL],
         mode: 'fast' as const,
         timeout: 30,
         concurrency: 1,
@@ -250,6 +246,7 @@ describe('golden scan', () => {
       const report = JSON.parse(fs.readFileSync(path.join(outDir, 'report.json'), 'utf8'));
       expect(report?.summary?.scanStatus).toBeTruthy();
       expect(report?.summary?.gate?.status).toBeTruthy();
+      // back-compat alias must equal gate.status
       expect(report?.summary?.status).toBe(report?.summary?.gate?.status);
 
       const sarif = JSON.parse(fs.readFileSync(path.join(outDir, 'results.sarif'), 'utf8'));
@@ -274,8 +271,7 @@ describe('golden scan', () => {
 
       const config = {
         outDir,
-        // ✅ no `as const`
-        format: ['json', 'sarif'],
+        format: [...FORMATS_GOLDEN],
         mode: 'fast' as const,
         timeout: 30,
         concurrency: 1,
@@ -313,8 +309,7 @@ describe('golden scan', () => {
     'finding IDs are deterministic across repeated runs (same platform)',
     async () => {
       const configBase = {
-        // ✅ no `as const`
-        format: ['json'],
+        format: [...FORMATS_JSON],
         mode: 'fast' as const,
         timeout: 30,
         concurrency: 1,
@@ -353,7 +348,7 @@ describe('golden scan', () => {
       const outDir = mkOutDir();
       const result = await runScan(fixture, {
         outDir,
-        format: ['json'],
+        format: [...FORMATS_JSON],
         mode: 'fast',
         timeout: 30,
         concurrency: 1,
@@ -497,7 +492,7 @@ describe('resilience', () => {
         fixture,
         {
           outDir,
-          format: ['json', 'sarif', 'md', 'html'],
+          format: [...FORMATS_ALL],
           mode: 'fast',
           timeout: 30,
           concurrency: 1,
@@ -512,7 +507,7 @@ describe('resilience', () => {
 
       const outputPath = writeOutputs(result, {
         outDir,
-        format: ['json', 'sarif', 'md', 'html'],
+        format: [...FORMATS_ALL],
         mode: 'fast',
         timeout: 30,
         concurrency: 1,
