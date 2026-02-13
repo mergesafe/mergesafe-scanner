@@ -1,10 +1,8 @@
 {
   "meta": {
-    "scannedPath": ".",
-    "generatedAt": "2026-02-13T04:57:32.934Z",
     "mode": "fast",
     "timeout": 30,
-    "concurrency": 4,
+    "concurrency": 1,
     "redacted": false,
     "engines": [
       {
@@ -12,7 +10,6 @@
         "displayName": "MergeSafe deterministic rules",
         "version": "builtin",
         "status": "ok",
-        "durationMs": 42,
         "installHint": "Built in - no install required."
       }
     ]
@@ -38,106 +35,103 @@
   },
   "findings": [
     {
-      "findingId": "ms-dfa4b037270fe10b",
-      "title": "Command execution from user-controlled input",
-      "severity": "critical",
-      "confidence": "medium",
-      "category": "injection",
-      "owaspMcpTop10": "MCP-A03",
-      "engineSources": [
-        {
-          "engineId": "mergesafe",
-          "engineRuleId": "MS002",
-          "engineSeverity": "critical",
-          "message": "Command execution from user-controlled input"
-        }
-      ],
-      "locations": [
-        {
-          "filePath": "server.js",
-          "line": 14
-        }
-      ],
-      "evidence": {
-        "excerpt": "exec(req.query.cmd);",
-        "note": "Merged evidence (best available excerpt)"
-      },
-      "remediation": "Avoid shell execution; never pass request-derived data into process execution. Prefer allowlists, safe APIs, and strict input validation.",
-      "references": [],
-      "tags": [
-        "exec",
-        "taint"
-      ],
-      "fingerprint": "dfa4b037270fe10b"
-    },
-    {
-      "findingId": "ms-92c220ac18ee2587",
-      "title": "Dynamic tool registration from untrusted input",
-      "severity": "critical",
+      "findingId": "ms-882e9895ea4fa3b8",
+      "title": "Tool descriptions claim read-only but code suggests writes/egress",
+      "severity": "medium",
       "confidence": "medium",
       "category": "integrity",
-      "owaspMcpTop10": "MCP-A10",
+      "owaspMcpTop10": "MCP-A09",
       "engineSources": [
         {
           "engineId": "mergesafe",
-          "engineRuleId": "MS010",
-          "engineSeverity": "critical",
-          "message": "Dynamic tool registration from untrusted input"
+          "engineRuleId": "MS009",
+          "engineSeverity": "medium",
+          "message": "Tool descriptions claim read-only but code suggests writes/egress"
         }
       ],
       "locations": [
         {
           "filePath": "server.js",
-          "line": 20
+          "line": 7
         }
       ],
       "evidence": {
-        "excerpt": "Dynamic tool registration from user input detected",
+        "excerpt": "Read-only claim conflicts with mutating capabilities",
         "note": "Merged evidence (best available excerpt)"
       },
-      "remediation": "Disallow dynamic tool registration from untrusted data.",
+      "remediation": "Align tool metadata with actual capabilities.",
       "references": [],
       "tags": [
-        "dynamic-tools"
+        "tool-metadata"
       ],
-      "fingerprint": "92c220ac18ee2587"
+      "fingerprint": "882e9895ea4fa3b8"
     },
     {
-      "findingId": "ms-d265d714f7f8e060",
-      "title": "Dangerous tool capability: arbitrary command execution exposed",
-      "severity": "critical",
+      "findingId": "ms-4f41d77b90439b54",
+      "title": "Overly-broad OAuth scope patterns in config",
+      "severity": "medium",
       "confidence": "medium",
-      "category": "injection",
-      "owaspMcpTop10": "MCP-A03",
+      "category": "auth",
+      "owaspMcpTop10": "MCP-A07",
       "engineSources": [
         {
           "engineId": "mergesafe",
-          "engineRuleId": "MS012",
-          "engineSeverity": "critical",
-          "message": "Dangerous tool capability: arbitrary command execution exposed"
+          "engineRuleId": "MS006",
+          "engineSeverity": "medium",
+          "message": "Overly-broad OAuth scope patterns in config"
         }
       ],
       "locations": [
         {
-          "filePath": "tools-list.json",
-          "line": 4
+          "filePath": "server.js",
+          "line": 9
         }
       ],
       "evidence": {
-        "excerpt": "exec_system_command: Runs an arbitrary system command on the host machine. Intended for advanced admin automation. WARNING: can execute any shell command. | schema props=[command, cwd, timeoutMs] required=[command]",
+        "excerpt": "Broad OAuth scope detected",
         "note": "Merged evidence (best available excerpt)"
       },
-      "remediation": "Do not expose arbitrary command execution tools to untrusted callers. Remove shell execution, enforce strict allowlists, require strong auth + approvals, and sandbox execution.",
+      "remediation": "Use least-privilege OAuth scopes.",
       "references": [],
       "tags": [
-        "exec",
-        "policy",
-        "tool-manifest"
+        "oauth"
       ],
-      "fingerprint": "d265d714f7f8e060"
+      "fingerprint": "4f41d77b90439b54"
     },
     {
-      "findingId": "ms-da8515fef537fd6b",
+      "findingId": "ms-d865e54a71c298d7",
+      "title": "Unsafe defaults (debug/allow-all)",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "hardening",
+      "owaspMcpTop10": "MCP-A08",
+      "engineSources": [
+        {
+          "engineId": "mergesafe",
+          "engineRuleId": "MS008",
+          "engineSeverity": "medium",
+          "message": "Unsafe defaults (debug/allow-all)"
+        }
+      ],
+      "locations": [
+        {
+          "filePath": "server.js",
+          "line": 10
+        }
+      ],
+      "evidence": {
+        "excerpt": "Unsafe permissive defaults found",
+        "note": "Merged evidence (best available excerpt)"
+      },
+      "remediation": "Disable debug and tighten allow-lists.",
+      "references": [],
+      "tags": [
+        "defaults"
+      ],
+      "fingerprint": "d865e54a71c298d7"
+    },
+    {
+      "findingId": "ms-8b4feca65b0a08a1",
       "title": "Destructive tools exposed without gating hints",
       "severity": "high",
       "confidence": "medium",
@@ -168,10 +162,10 @@
         "gating",
         "gating-missing"
       ],
-      "fingerprint": "da8515fef537fd6b"
+      "fingerprint": "8b4feca65b0a08a1"
     },
     {
-      "findingId": "ms-1f187a0ad2692b4c",
+      "findingId": "ms-6ddd453291255012",
       "title": "Missing auth middleware smell on HTTP MCP endpoints",
       "severity": "high",
       "confidence": "medium",
@@ -200,10 +194,10 @@
       "tags": [
         "auth"
       ],
-      "fingerprint": "1f187a0ad2692b4c"
+      "fingerprint": "6ddd453291255012"
     },
     {
-      "findingId": "ms-633feaaafa25484f",
+      "findingId": "ms-887dd66e3f08bf6e",
       "title": "Secrets or tokens likely logged or dumped",
       "severity": "high",
       "confidence": "medium",
@@ -232,10 +226,10 @@
       "tags": [
         "secrets"
       ],
-      "fingerprint": "633feaaafa25484f"
+      "fingerprint": "887dd66e3f08bf6e"
     },
     {
-      "findingId": "ms-e7e73fe7280161b7",
+      "findingId": "ms-cba5543b144f90d4",
       "title": "Filesystem write with user-controlled path",
       "severity": "high",
       "confidence": "medium",
@@ -266,10 +260,10 @@
         "path-traversal",
         "taint"
       ],
-      "fingerprint": "e7e73fe7280161b7"
+      "fingerprint": "cba5543b144f90d4"
     },
     {
-      "findingId": "ms-81f91729dcf85099",
+      "findingId": "ms-b585b20068bfd07a",
       "title": "Network egress from tool handlers without allowlist",
       "severity": "high",
       "confidence": "medium",
@@ -299,10 +293,10 @@
         "gating-missing",
         "net-egress"
       ],
-      "fingerprint": "81f91729dcf85099"
+      "fingerprint": "b585b20068bfd07a"
     },
     {
-      "findingId": "ms-c87dd048565a6003",
+      "findingId": "ms-666ffa29f141a99c",
       "title": "High-risk tool exposed without gating hints (auth/allowlist/approval)",
       "severity": "high",
       "confidence": "medium",
@@ -334,10 +328,45 @@
         "policy",
         "tool-manifest"
       ],
-      "fingerprint": "c87dd048565a6003"
+      "fingerprint": "666ffa29f141a99c"
     },
     {
-      "findingId": "ms-8d013d0da4fbf0d0",
+      "findingId": "ms-21d7d8f2efcb49ef",
+      "title": "High-risk tool exposed without gating hints (auth/allowlist/approval)",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "auth",
+      "owaspMcpTop10": "MCP-A01",
+      "engineSources": [
+        {
+          "engineId": "mergesafe",
+          "engineRuleId": "MS016",
+          "engineSeverity": "high",
+          "message": "High-risk tool exposed without gating hints (auth/allowlist/approval)"
+        }
+      ],
+      "locations": [
+        {
+          "filePath": "tools-list.json",
+          "line": 18
+        }
+      ],
+      "evidence": {
+        "excerpt": "read_any_file: Reads the contents of any local file path provided by the user (no allowlist). Useful for debugging and support. | schema props=[path, maxBytes] required=[path]",
+        "note": "Merged evidence (best available excerpt)"
+      },
+      "remediation": "Add explicit gating: authentication, authorization scopes, approvals/confirmations, and allowlists. Document constraints in tool metadata and enforce them in code.",
+      "references": [],
+      "tags": [
+        "gating",
+        "gating-missing",
+        "policy",
+        "tool-manifest"
+      ],
+      "fingerprint": "21d7d8f2efcb49ef"
+    },
+    {
+      "findingId": "ms-fa317fab0e4c15b0",
       "title": "Dangerous tool capability: arbitrary file read without allowlist",
       "severity": "high",
       "confidence": "medium",
@@ -369,10 +398,10 @@
         "policy",
         "tool-manifest"
       ],
-      "fingerprint": "8d013d0da4fbf0d0"
+      "fingerprint": "fa317fab0e4c15b0"
     },
     {
-      "findingId": "ms-98f64389025afdf4",
+      "findingId": "ms-2714ef3d7cb89dc4",
       "title": "High-risk tool exposed without gating hints (auth/allowlist/approval)",
       "severity": "high",
       "confidence": "medium",
@@ -389,11 +418,11 @@
       "locations": [
         {
           "filePath": "tools-list.json",
-          "line": 18
+          "line": 31
         }
       ],
       "evidence": {
-        "excerpt": "read_any_file: Reads the contents of any local file path provided by the user (no allowlist). Useful for debugging and support. | schema props=[path, maxBytes] required=[path]",
+        "excerpt": "http_fetch: Fetches any URL and returns the response body. Supports internal hosts and arbitrary headers. Can be used to call internal services. | schema props=[url, method, headers] required=[url]",
         "note": "Merged evidence (best available excerpt)"
       },
       "remediation": "Add explicit gating: authentication, authorization scopes, approvals/confirmations, and allowlists. Document constraints in tool metadata and enforce them in code.",
@@ -404,10 +433,10 @@
         "policy",
         "tool-manifest"
       ],
-      "fingerprint": "98f64389025afdf4"
+      "fingerprint": "2714ef3d7cb89dc4"
     },
     {
-      "findingId": "ms-b0ed10c7799265ca",
+      "findingId": "ms-b40d5f491ddbe420",
       "title": "Dangerous tool capability: unrestricted network egress without allowlist",
       "severity": "high",
       "confidence": "medium",
@@ -439,45 +468,10 @@
         "policy",
         "tool-manifest"
       ],
-      "fingerprint": "b0ed10c7799265ca"
+      "fingerprint": "b40d5f491ddbe420"
     },
     {
-      "findingId": "ms-bf1313cfb90dd64a",
-      "title": "High-risk tool exposed without gating hints (auth/allowlist/approval)",
-      "severity": "high",
-      "confidence": "medium",
-      "category": "auth",
-      "owaspMcpTop10": "MCP-A01",
-      "engineSources": [
-        {
-          "engineId": "mergesafe",
-          "engineRuleId": "MS016",
-          "engineSeverity": "high",
-          "message": "High-risk tool exposed without gating hints (auth/allowlist/approval)"
-        }
-      ],
-      "locations": [
-        {
-          "filePath": "tools-list.json",
-          "line": 31
-        }
-      ],
-      "evidence": {
-        "excerpt": "http_fetch: Fetches any URL and returns the response body. Supports internal hosts and arbitrary headers. Can be used to call internal services. | schema props=[url, method, headers] required=[url]",
-        "note": "Merged evidence (best available excerpt)"
-      },
-      "remediation": "Add explicit gating: authentication, authorization scopes, approvals/confirmations, and allowlists. Document constraints in tool metadata and enforce them in code.",
-      "references": [],
-      "tags": [
-        "gating",
-        "gating-missing",
-        "policy",
-        "tool-manifest"
-      ],
-      "fingerprint": "bf1313cfb90dd64a"
-    },
-    {
-      "findingId": "ms-247c0cf3cd6a339e",
+      "findingId": "ms-1b994d00ca59a7c3",
       "title": "Dangerous tool behavior: token/secret logging helper present",
       "severity": "high",
       "confidence": "medium",
@@ -509,103 +503,106 @@
         "secrets",
         "tool-manifest"
       ],
-      "fingerprint": "247c0cf3cd6a339e"
+      "fingerprint": "1b994d00ca59a7c3"
     },
     {
-      "findingId": "ms-7c8d6eca981db02f",
-      "title": "Tool descriptions claim read-only but code suggests writes/egress",
-      "severity": "medium",
+      "findingId": "ms-9a201e7a3426a1ef",
+      "title": "Command execution from user-controlled input",
+      "severity": "critical",
+      "confidence": "medium",
+      "category": "injection",
+      "owaspMcpTop10": "MCP-A03",
+      "engineSources": [
+        {
+          "engineId": "mergesafe",
+          "engineRuleId": "MS002",
+          "engineSeverity": "critical",
+          "message": "Command execution from user-controlled input"
+        }
+      ],
+      "locations": [
+        {
+          "filePath": "server.js",
+          "line": 14
+        }
+      ],
+      "evidence": {
+        "excerpt": "exec(req.query.cmd);",
+        "note": "Merged evidence (best available excerpt)"
+      },
+      "remediation": "Avoid shell execution; never pass request-derived data into process execution. Prefer allowlists, safe APIs, and strict input validation.",
+      "references": [],
+      "tags": [
+        "exec",
+        "taint"
+      ],
+      "fingerprint": "9a201e7a3426a1ef"
+    },
+    {
+      "findingId": "ms-e7ee865034d5fe42",
+      "title": "Dynamic tool registration from untrusted input",
+      "severity": "critical",
       "confidence": "medium",
       "category": "integrity",
-      "owaspMcpTop10": "MCP-A09",
+      "owaspMcpTop10": "MCP-A10",
       "engineSources": [
         {
           "engineId": "mergesafe",
-          "engineRuleId": "MS009",
-          "engineSeverity": "medium",
-          "message": "Tool descriptions claim read-only but code suggests writes/egress"
+          "engineRuleId": "MS010",
+          "engineSeverity": "critical",
+          "message": "Dynamic tool registration from untrusted input"
         }
       ],
       "locations": [
         {
           "filePath": "server.js",
-          "line": 7
+          "line": 20
         }
       ],
       "evidence": {
-        "excerpt": "Read-only claim conflicts with mutating capabilities",
+        "excerpt": "Dynamic tool registration from user input detected",
         "note": "Merged evidence (best available excerpt)"
       },
-      "remediation": "Align tool metadata with actual capabilities.",
+      "remediation": "Disallow dynamic tool registration from untrusted data.",
       "references": [],
       "tags": [
-        "tool-metadata"
+        "dynamic-tools"
       ],
-      "fingerprint": "7c8d6eca981db02f"
+      "fingerprint": "e7ee865034d5fe42"
     },
     {
-      "findingId": "ms-625225c7a74b646c",
-      "title": "Overly-broad OAuth scope patterns in config",
-      "severity": "medium",
+      "findingId": "ms-dd7585ed4d2dc405",
+      "title": "Dangerous tool capability: arbitrary command execution exposed",
+      "severity": "critical",
       "confidence": "medium",
-      "category": "auth",
-      "owaspMcpTop10": "MCP-A07",
+      "category": "injection",
+      "owaspMcpTop10": "MCP-A03",
       "engineSources": [
         {
           "engineId": "mergesafe",
-          "engineRuleId": "MS006",
-          "engineSeverity": "medium",
-          "message": "Overly-broad OAuth scope patterns in config"
+          "engineRuleId": "MS012",
+          "engineSeverity": "critical",
+          "message": "Dangerous tool capability: arbitrary command execution exposed"
         }
       ],
       "locations": [
         {
-          "filePath": "server.js",
-          "line": 9
+          "filePath": "tools-list.json",
+          "line": 4
         }
       ],
       "evidence": {
-        "excerpt": "Broad OAuth scope detected",
+        "excerpt": "exec_system_command: Runs an arbitrary system command on the host machine. Intended for advanced admin automation. WARNING: can execute any shell command. | schema props=[command, cwd, timeoutMs] required=[command]",
         "note": "Merged evidence (best available excerpt)"
       },
-      "remediation": "Use least-privilege OAuth scopes.",
+      "remediation": "Do not expose arbitrary command execution tools to untrusted callers. Remove shell execution, enforce strict allowlists, require strong auth + approvals, and sandbox execution.",
       "references": [],
       "tags": [
-        "oauth"
+        "exec",
+        "policy",
+        "tool-manifest"
       ],
-      "fingerprint": "625225c7a74b646c"
-    },
-    {
-      "findingId": "ms-15c456829266b633",
-      "title": "Unsafe defaults (debug/allow-all)",
-      "severity": "medium",
-      "confidence": "medium",
-      "category": "hardening",
-      "owaspMcpTop10": "MCP-A08",
-      "engineSources": [
-        {
-          "engineId": "mergesafe",
-          "engineRuleId": "MS008",
-          "engineSeverity": "medium",
-          "message": "Unsafe defaults (debug/allow-all)"
-        }
-      ],
-      "locations": [
-        {
-          "filePath": "server.js",
-          "line": 10
-        }
-      ],
-      "evidence": {
-        "excerpt": "Unsafe permissive defaults found",
-        "note": "Merged evidence (best available excerpt)"
-      },
-      "remediation": "Disable debug and tighten allow-lists.",
-      "references": [],
-      "tags": [
-        "defaults"
-      ],
-      "fingerprint": "15c456829266b633"
+      "fingerprint": "dd7585ed4d2dc405"
     }
   ],
   "byEngine": {

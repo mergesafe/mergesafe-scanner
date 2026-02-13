@@ -183,6 +183,15 @@ export interface RawFinding {
   tags: string[];
 }
 
+/**
+ * Deterministic string comparator (do NOT use localeCompare; can vary by runtime/locale).
+ */
+function cmpStr(a: string, b: string): number {
+  const A = String(a ?? '');
+  const B = String(b ?? '');
+  return A < B ? -1 : A > B ? 1 : 0;
+}
+
 export function stableHash(value: string): string {
   return crypto.createHash('sha256').update(value).digest('hex').slice(0, 16);
 }
@@ -231,9 +240,7 @@ export function canonicalFingerprintInput(args: {
   title?: string;
   tags?: readonly string[];
 }): string {
-  const normalizedTags = [...new Set((args.tags ?? []).map((t) => normalizeTag(t)).filter(Boolean))].sort((a, b) =>
-    a.localeCompare(b)
-  );
+  const normalizedTags = [...new Set((args.tags ?? []).map((t) => normalizeTag(t)).filter(Boolean))].sort(cmpStr);
 
   return [
     normalizePathForKey(args.filePath),
@@ -296,7 +303,7 @@ function pickBestEvidence(evidences: FindingEvidence[]): FindingEvidence {
   // Prefer an excerpt (longest non-empty), otherwise keep first excerptHash.
   const withExcerpt = evidences
     .filter((e) => typeof e.excerpt === 'string' && e.excerpt.trim().length > 0)
-    .sort((a, b) => b.excerpt!.trim().length - a.excerpt!.trim().length);
+    .sort((a, b) => (b.excerpt!.trim().length || 0) - (a.excerpt!.trim().length || 0));
 
   if (withExcerpt.length) {
     return {
@@ -325,7 +332,7 @@ const ENGINE_PRIORITY: Record<string, number> = {
 
 // ✅ IMPORTANT: Make this Set<string> so .has(string) is valid (fixes TS2345).
 const ENGINE_ID_TAGS: ReadonlySet<string> = new Set<string>(AVAILABLE_ENGINES);
-const GENERIC_TAGS = new Set(['mcp', 'node', 'javascript', 'typescript', 'python', 'security', 'scanner']);
+const GENERIC_TAGS: ReadonlySet<string> = new Set(['mcp', 'node', 'javascript', 'typescript', 'python', 'security', 'scanner']);
 
 function normalizeTag(t: string): string {
   return String(t || '')
@@ -352,19 +359,27 @@ function deriveFamilyKey(finding: Finding): string {
   parts.push(finding.category);
   parts.push(finding.owaspMcpTop10);
 
-  for (const src of finding.engineSources ?? []) {
+  // IMPORTANT: stabilize ordering to avoid drift across runs/platforms
+  const stableSources = [...(finding.engineSources ?? [])].sort((a, b) => {
+    return (
+      cmpStr(String(a.engineId), String(b.engineId)) ||
+      cmpStr(String(a.engineRuleId ?? ''), String(b.engineRuleId ?? '')) ||
+      cmpStr(String(a.engineSeverity ?? ''), String(b.engineSeverity ?? '')) ||
+      cmpStr(String(a.message ?? ''), String(b.message ?? ''))
+    );
+  });
+
+  for (const src of stableSources) {
     parts.push(src.engineRuleId ?? '');
     parts.push(src.message ?? '');
   }
 
-  for (const t of finding.tags ?? []) parts.push(t);
+  const stableTags = [...(finding.tags ?? [])].map((t) => String(t ?? '')).sort(cmpStr);
+  for (const t of stableTags) parts.push(t);
 
   const haystack = normalizeKeywordText(parts.filter(Boolean).join(' '));
 
-  if (
-    /\b(command|cmd)\b/.test(haystack) &&
-    /\b(exec|execute|execution|shell|spawn|child process|childprocess)\b/.test(haystack)
-  ) {
+  if (/\b(command|cmd)\b/.test(haystack) && /\b(exec|execute|execution|shell|spawn|child process|childprocess)\b/.test(haystack)) {
     return 'command-exec';
   }
   if (/\b(exec|execfile|execsync|spawn|spawnsync|child_process)\b/.test(haystack)) {
@@ -457,12 +472,10 @@ export function toFinding(raw: RawFinding, redact: boolean): Finding {
     owaspMcpTop10: raw.owaspMcpTop10,
     engineSources: [{ engineId: 'mergesafe', engineRuleId: raw.ruleId, engineSeverity: raw.severity, message: raw.title }],
     locations: [{ filePath: normalizePathForKey(raw.filePath), line: raw.line }],
-    evidence: redact
-      ? { excerptHash: snippetHash, note: 'Redacted evidence' }
-      : { excerpt: raw.evidence, note: 'Static pattern match' },
+    evidence: redact ? { excerptHash: snippetHash, note: 'Redacted evidence' } : { excerpt: raw.evidence, note: 'Static pattern match' },
     remediation: raw.remediation,
-    references: [...(raw.references ?? [])].sort((a, b) => a.localeCompare(b)),
-    tags: [...(raw.tags ?? [])].sort((a, b) => a.localeCompare(b)),
+    references: [...(raw.references ?? [])].sort(cmpStr),
+    tags: [...(raw.tags ?? [])].sort(cmpStr),
     fingerprint,
   };
 }
@@ -471,22 +484,16 @@ export function sortFindingsDeterministic(findings: Finding[]): Finding[] {
   const normalized = findings.map((f) => ({
     ...f,
     engineSources: [...(f.engineSources ?? [])].sort((a, b) => {
-      const e = String(a.engineId).localeCompare(String(b.engineId));
-      if (e !== 0) return e;
-      const r = String(a.engineRuleId ?? '').localeCompare(String(b.engineRuleId ?? ''));
-      if (r !== 0) return r;
-      return String(a.message ?? '').localeCompare(String(b.message ?? ''));
+      return (
+        cmpStr(String(a.engineId), String(b.engineId)) ||
+        cmpStr(String(a.engineRuleId ?? ''), String(b.engineRuleId ?? '')) ||
+        cmpStr(String(a.message ?? ''), String(b.message ?? ''))
+      );
     }),
-    tags: [...new Set((f.tags ?? []).map((t) => String(t).trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
-    references: [...new Set((f.references ?? []).map((r) => String(r).trim()).filter(Boolean))].sort((a, b) =>
-      a.localeCompare(b)
-    ),
+    tags: [...new Set((f.tags ?? []).map((t) => String(t).trim()).filter(Boolean))].sort(cmpStr),
+    references: [...new Set((f.references ?? []).map((r) => String(r).trim()).filter(Boolean))].sort(cmpStr),
     locations: [...(f.locations ?? [])].sort((a, b) => {
-      const p = String(a.filePath).localeCompare(String(b.filePath));
-      if (p !== 0) return p;
-      const l = Number(a.line ?? 0) - Number(b.line ?? 0);
-      if (l !== 0) return l;
-      return Number(a.column ?? 0) - Number(b.column ?? 0);
+      return cmpStr(String(a.filePath), String(b.filePath)) || Number(a.line ?? 0) - Number(b.line ?? 0) || Number(a.column ?? 0) - Number(b.column ?? 0);
     }),
   }));
 
@@ -496,13 +503,14 @@ export function sortFindingsDeterministic(findings: Finding[]): Finding[] {
 
     const aLoc = a.locations?.[0];
     const bLoc = b.locations?.[0];
-    const fp = String(aLoc?.filePath ?? '').localeCompare(String(bLoc?.filePath ?? ''));
+
+    const fp = cmpStr(String(aLoc?.filePath ?? ''), String(bLoc?.filePath ?? ''));
     if (fp !== 0) return fp;
 
     const ln = Number(aLoc?.line ?? 0) - Number(bLoc?.line ?? 0);
     if (ln !== 0) return ln;
 
-    return String(a.findingId ?? '').localeCompare(String(b.findingId ?? ''));
+    return cmpStr(String(a.findingId ?? ''), String(b.findingId ?? ''));
   });
 }
 
@@ -550,7 +558,7 @@ export function mergeCanonicalFindings(findings: Finding[]): Finding[] {
       const bp = ENGINE_PRIORITY[bEng] ?? 99;
       if (ap !== bp) return ap - bp;
 
-      return String(a.findingId).localeCompare(String(b.findingId));
+      return cmpStr(String(a.findingId), String(b.findingId));
     })[0];
 
     const allSources: EngineSource[] = [];
@@ -580,28 +588,22 @@ export function mergeCanonicalFindings(findings: Finding[]): Finding[] {
       confidence,
 
       engineSources: dedupeEngineSources(allSources).sort((a, b) => {
-        const e = String(a.engineId).localeCompare(String(b.engineId));
-        if (e !== 0) return e;
-        const r = String(a.engineRuleId ?? '').localeCompare(String(b.engineRuleId ?? ''));
-        if (r !== 0) return r;
-        return String(a.message ?? '').localeCompare(String(b.message ?? ''));
+        return (
+          cmpStr(String(a.engineId), String(b.engineId)) ||
+          cmpStr(String(a.engineRuleId ?? ''), String(b.engineRuleId ?? '')) ||
+          cmpStr(String(a.message ?? ''), String(b.message ?? ''))
+        );
       }),
 
       tags: [...new Set(allTags.map((t) => String(t || '').trim()).filter(Boolean))]
         .filter((t) => !ENGINE_ID_TAGS.has(normalizeTag(t)))
         .filter((t) => !GENERIC_TAGS.has(normalizeTag(t)))
-        .sort((a, b) => a.localeCompare(b)),
+        .sort(cmpStr),
 
-      references: [...new Set(allRefs.map((r) => String(r || '').trim()).filter(Boolean))].sort((a, b) =>
-        a.localeCompare(b)
-      ),
+      references: [...new Set(allRefs.map((r) => String(r || '').trim()).filter(Boolean))].sort(cmpStr),
 
       locations: dedupeLocations(allLocs).sort((a, b) => {
-        const p = String(a.filePath).localeCompare(String(b.filePath));
-        if (p !== 0) return p;
-        const l = (a.line ?? 0) - (b.line ?? 0);
-        if (l !== 0) return l;
-        return (a.column ?? 0) - (b.column ?? 0);
+        return cmpStr(String(a.filePath), String(b.filePath)) || (a.line ?? 0) - (b.line ?? 0) || (a.column ?? 0) - (b.column ?? 0);
       }),
 
       evidence: pickBestEvidence(allEvidence),
@@ -673,10 +675,7 @@ export function summarize(
 
   const gateStatus: GateStatus = shouldFail(bySeverity, failOn) ? 'FAIL' : 'PASS';
 
-  const scanStatus: ScanStatus =
-    opts?.scanStatus ??
-    deriveScanStatus(opts?.engines) ??
-    'COMPLETED';
+  const scanStatus: ScanStatus = opts?.scanStatus ?? deriveScanStatus(opts?.engines) ?? 'COMPLETED';
 
   const gate: ScanGate = {
     status: gateStatus,

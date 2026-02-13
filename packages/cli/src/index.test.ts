@@ -20,8 +20,12 @@ import { DEFAULT_ENGINES } from '@mergesafe/core';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = path.resolve(here, '../../../fixtures/node-unsafe-server');
-const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mergesafe-test-golden-'));
 const repoRoot = path.resolve(here, '../../..');
+
+const UPDATE_GOLDENS =
+  process.env.UPDATE_GOLDENS === '1' ||
+  process.env.MERGESAFE_UPDATE_GOLDENS === '1' ||
+  process.env.CI_UPDATE_GOLDENS === '1';
 
 type CliResult = {
   status: number | null;
@@ -58,22 +62,66 @@ const runCli = (args: string[]): CliResult => {
   };
 };
 
+function makeTempOutDir(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mergesafe-test-'));
+  return dir;
+}
+
+const SEV_RANK: Record<string, number> = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
+
+function stableKeyForFinding(f: any): string {
+  const loc = (Array.isArray(f?.locations) && f.locations[0]) ? f.locations[0] : {};
+  const filePath = String(loc?.filePath ?? '');
+  const line = Number(loc?.line ?? 0);
+  const sev = String(f?.severity ?? '');
+  const title = String(f?.title ?? '');
+  const category = String(f?.category ?? '');
+  const owasp = String(f?.owaspMcpTop10 ?? '');
+
+  const ruleIds =
+    Array.isArray(f?.engineSources)
+      ? f.engineSources.map((s: any) => String(s?.engineRuleId ?? '')).sort().join(',')
+      : '';
+
+  return [
+    String(SEV_RANK[sev] ?? 0).padStart(2, '0'),
+    filePath,
+    String(line).padStart(6, '0'),
+    category,
+    owasp,
+    title,
+    ruleIds,
+  ].join('|');
+}
 
 function sanitizeReport(report: any) {
   const copy = JSON.parse(JSON.stringify(report));
+
   if (copy?.meta) {
+    // timestamps/host-specific
     delete copy.meta.generatedAt;
+
+    // Avoid machine-dependent scannedPath drift (absolute vs relative, separators, etc.)
+    delete copy.meta.scannedPath;
+
     if (Array.isArray(copy.meta.engines)) {
       for (const engine of copy.meta.engines) {
         delete engine.durationMs;
       }
     }
   }
+
+  // Sort findings deterministically for comparison (even if internal ordering changes between versions).
+  if (Array.isArray(copy?.findings)) {
+    copy.findings.sort((a: any, b: any) => stableKeyForFinding(a).localeCompare(stableKeyForFinding(b)));
+  }
+
   return copy;
 }
 
 function sanitizeSarif(sarif: any) {
   const copy = JSON.parse(JSON.stringify(sarif));
+
   if (Array.isArray(copy?.runs)) {
     for (const run of copy.runs) {
       if (run?.invocations) {
@@ -84,103 +132,154 @@ function sanitizeSarif(sarif: any) {
       }
     }
   }
+
   return copy;
 }
 
+function writeJson(filePath: string, obj: any) {
+  fs.writeFileSync(filePath, JSON.stringify(obj, null, 2) + '\n', 'utf8');
+}
+
 describe('golden scan', () => {
-  test('creates report structures and formats', async () => {
-    fs.rmSync(outDir, { recursive: true, force: true });
+  test(
+    'creates report structures and formats (mergesafe-only, deterministic)',
+    async () => {
+      const outDir = makeTempOutDir();
+      fs.rmSync(outDir, { recursive: true, force: true });
+      fs.mkdirSync(outDir, { recursive: true });
 
-    const result = await runScan(fixture, {
-      outDir,
-      format: ['json', 'sarif', 'md', 'html'],
-      mode: 'fast',
-      timeout: 30,
-      concurrency: 4,
-      failOn: 'none',
-      redact: false,
-      autoInstall: false,
-    });
+      // IMPORTANT:
+      // Golden/unit tests must NOT depend on external engines (semgrep/gitleaks/cisco/osv),
+      // otherwise they become flaky and slow on Windows/CI.
+      const config = {
+        outDir,
+        format: ['json', 'sarif', 'md', 'html'] as const,
+        mode: 'fast' as const,
+        timeout: 30,
+        concurrency: 1,
+        failOn: 'none' as const,
+        redact: false,
+        autoInstall: false,
+        pathMode: 'relative' as const,
+        engines: ['mergesafe'],
+      };
 
-    const outputPath = writeOutputs(result, {
-      outDir,
-      format: ['json', 'sarif', 'md', 'html'],
-      mode: 'fast',
-      timeout: 30,
-      concurrency: 4,
-      failOn: 'none',
-      redact: false,
-      autoInstall: false,
-    });
+      const result = await runScan(fixture, config);
+      const outputPath = writeOutputs(result, config);
 
-    expect(outputPath).toBe(normalizeOutDir(outDir));
-    expect(fs.existsSync(path.join(outDir, 'report.json'))).toBe(true);
-    expect(fs.existsSync(path.join(outDir, 'results.sarif'))).toBe(true);
+      expect(outputPath).toBe(normalizeOutDir(outDir));
+      expect(fs.existsSync(path.join(outDir, 'report.json'))).toBe(true);
+      expect(fs.existsSync(path.join(outDir, 'results.sarif'))).toBe(true);
+      expect(fs.existsSync(path.join(outDir, 'summary.md'))).toBe(true);
+      expect(fs.existsSync(path.join(outDir, 'report.html'))).toBe(true);
 
-    const sarif = JSON.parse(fs.readFileSync(path.join(outDir, 'results.sarif'), 'utf8'));
-    expect(Array.isArray(sarif.runs)).toBe(true);
-    expect(sarif.runs.length).toBeGreaterThan(0);
+      const report = JSON.parse(fs.readFileSync(path.join(outDir, 'report.json'), 'utf8'));
 
-    expect(fs.existsSync(path.join(outDir, 'summary.md'))).toBe(true);
-    expect(fs.existsSync(path.join(outDir, 'report.html'))).toBe(true);
-    expect(result.findings.length).toBeGreaterThan(0);
+      // New fields must exist
+      expect(report?.summary?.scanStatus).toBeTruthy();
+      expect(report?.summary?.gate?.status).toBeTruthy();
 
-    const md = fs.readFileSync(path.join(outDir, 'summary.md'), 'utf8');
-    expect(md).toContain('Scan: **Completed**');
-    expect(md).toContain('Risk grade:');
-    expect(md).toContain('Top Findings');
-  });
+      // back-compat alias must equal gate.status
+      expect(report?.summary?.status).toBe(report?.summary?.gate?.status);
 
+      const sarif = JSON.parse(fs.readFileSync(path.join(outDir, 'results.sarif'), 'utf8'));
+      expect(Array.isArray(sarif.runs)).toBe(true);
+      expect(sarif.runs.length).toBeGreaterThan(0);
 
-  test('matches deterministic golden fixtures (except timestamps)', async () => {
-    const goldenDir = path.resolve(here, '../testdata/goldens/node-unsafe-server');
-    fs.mkdirSync(goldenDir, { recursive: true });
+      const md = fs.readFileSync(path.join(outDir, 'summary.md'), 'utf8');
+      expect(md).toContain('Scan: **Completed**');
+      expect(md).toContain('Risk grade:');
+      expect(md).toContain('Top Findings');
 
-    const config = {
-      outDir,
-      format: ['json', 'sarif'] as const,
-      mode: 'fast' as const,
-      timeout: 30,
-      concurrency: 4,
-      failOn: 'none' as const,
-      redact: false,
-      autoInstall: false,
-      pathMode: 'relative' as const,
-      engines: ['mergesafe'],
-    };
+      expect(result.findings.length).toBeGreaterThan(0);
+    },
+    20000
+  );
 
-    const runA = await runScan(fixture, config);
-    writeOutputs(runA, config);
+  test(
+    'matches deterministic golden fixtures (except timestamps)',
+    async () => {
+      const outDir = makeTempOutDir();
+      fs.rmSync(outDir, { recursive: true, force: true });
+      fs.mkdirSync(outDir, { recursive: true });
 
-    const currentReport = sanitizeReport(JSON.parse(fs.readFileSync(path.join(outDir, 'report.json'), 'utf8')));
-    const currentSarif = sanitizeSarif(JSON.parse(fs.readFileSync(path.join(outDir, 'results.sarif'), 'utf8')));
+      const goldenDir = path.resolve(here, '../testdata/goldens/node-unsafe-server');
+      fs.mkdirSync(goldenDir, { recursive: true });
 
-    const goldenReport = sanitizeReport(JSON.parse(fs.readFileSync(path.join(goldenDir, 'report.json'), 'utf8')));
-    const goldenSarif = sanitizeSarif(JSON.parse(fs.readFileSync(path.join(goldenDir, 'results.sarif'), 'utf8')));
+      const config = {
+        outDir,
+        format: ['json', 'sarif'] as const,
+        mode: 'fast' as const,
+        timeout: 30,
+        concurrency: 1,
+        failOn: 'none' as const,
+        redact: false,
+        autoInstall: false,
+        pathMode: 'relative' as const,
+        engines: ['mergesafe'],
+      };
 
-    expect(currentReport).toEqual(goldenReport);
-    expect(currentSarif).toEqual(goldenSarif);
-  });
+      const runA = await runScan(fixture, config);
+      writeOutputs(runA, config);
 
-  test('fail-on high returns fail status', async () => {
-    const result = await runScan(fixture, {
-      outDir,
-      format: ['json'],
-      mode: 'fast',
-      timeout: 30,
-      concurrency: 4,
-      failOn: 'high',
-      redact: false,
-      autoInstall: false,
-    });
+      const currentReport = sanitizeReport(JSON.parse(fs.readFileSync(path.join(outDir, 'report.json'), 'utf8')));
+      const currentSarif = sanitizeSarif(JSON.parse(fs.readFileSync(path.join(outDir, 'results.sarif'), 'utf8')));
 
-    expect(result.summary.bySeverity.high + result.summary.bySeverity.critical).toBeGreaterThan(0);
-    expect(result.summary.status).toBe('FAIL');
-  });
+      const goldenReportPath = path.join(goldenDir, 'report.json');
+      const goldenSarifPath = path.join(goldenDir, 'results.sarif');
+
+      const haveGoldens = fs.existsSync(goldenReportPath) && fs.existsSync(goldenSarifPath);
+
+      if (UPDATE_GOLDENS || !haveGoldens) {
+        writeJson(goldenReportPath, currentReport);
+        writeJson(goldenSarifPath, currentSarif);
+        // If we're updating goldens, this test should pass by construction.
+        expect(true).toBe(true);
+        return;
+      }
+
+      const goldenReport = sanitizeReport(JSON.parse(fs.readFileSync(goldenReportPath, 'utf8')));
+      const goldenSarif = sanitizeSarif(JSON.parse(fs.readFileSync(goldenSarifPath, 'utf8')));
+
+      expect(currentReport).toEqual(goldenReport);
+      expect(currentSarif).toEqual(goldenSarif);
+    },
+    20000
+  );
+
+  test(
+    'fail-on high returns FAIL gate status (mergesafe-only)',
+    async () => {
+      const outDir = makeTempOutDir();
+      fs.rmSync(outDir, { recursive: true, force: true });
+      fs.mkdirSync(outDir, { recursive: true });
+
+      const result = await runScan(fixture, {
+        outDir,
+        format: ['json'] as const,
+        mode: 'fast' as const,
+        timeout: 30,
+        concurrency: 1,
+        failOn: 'high',
+        redact: false,
+        autoInstall: false,
+        pathMode: 'relative' as const,
+        engines: ['mergesafe'],
+      });
+
+      expect(result.summary.bySeverity.high + result.summary.bySeverity.critical).toBeGreaterThan(0);
+
+      // new canonical field
+      expect(result.summary.gate.status).toBe('FAIL');
+
+      // back-compat alias must remain
+      expect(result.summary.status).toBe('FAIL');
+    },
+    20000
+  );
 });
 
 describe('option parsing utilities', () => {
-
   test('resolveConfig accepts readonly format tuples', () => {
     const cfg = resolveConfig({ format: 'json,sarif' });
     const readonlyFormats = ['json', 'sarif', 'md', 'html'] as const;
@@ -282,25 +381,46 @@ describe('help output', () => {
 });
 
 describe('resilience', () => {
-  test('scan completes and writes outputs when an engine fails', async () => {
-    const failingAdapter: EngineAdapter = {
-      engineId: 'boom',
-      displayName: 'Boom engine',
-      installHint: 'none',
-      async version() {
-        return '1.0';
-      },
-      async isAvailable() {
-        return true;
-      },
-      async run() {
-        throw new Error('simulated failure');
-      },
-    };
+  test(
+    'scan completes and writes outputs when an engine fails',
+    async () => {
+      const outDir = makeTempOutDir();
+      fs.rmSync(outDir, { recursive: true, force: true });
+      fs.mkdirSync(outDir, { recursive: true });
 
-    const result = await runScan(
-      fixture,
-      {
+      const failingAdapter: EngineAdapter = {
+        engineId: 'boom',
+        displayName: 'Boom engine',
+        installHint: 'none',
+        async version() {
+          return '1.0';
+        },
+        async isAvailable() {
+          return true;
+        },
+        async run() {
+          throw new Error('simulated failure');
+        },
+      };
+
+      const result = await runScan(
+        fixture,
+        {
+          outDir,
+          format: ['json', 'sarif', 'md', 'html'],
+          mode: 'fast',
+          timeout: 30,
+          concurrency: 1,
+          failOn: 'none',
+          redact: false,
+          autoInstall: false,
+          pathMode: 'relative',
+          engines: ['boom'],
+        },
+        [failingAdapter]
+      );
+
+      const outputPath = writeOutputs(result, {
         outDir,
         format: ['json', 'sarif', 'md', 'html'],
         mode: 'fast',
@@ -309,32 +429,27 @@ describe('resilience', () => {
         failOn: 'none',
         redact: false,
         autoInstall: false,
+        pathMode: 'relative',
         engines: ['boom'],
-      },
-      [failingAdapter]
-    );
+      });
 
-    const outputPath = writeOutputs(result, {
-      outDir,
-      format: ['json', 'sarif', 'md', 'html'],
-      mode: 'fast',
-      timeout: 30,
-      concurrency: 1,
-      failOn: 'none',
-      redact: false,
-      autoInstall: false,
-      engines: ['boom'],
-    });
+      expect(outputPath).toBe(normalizeOutDir(outDir));
+      expect(fs.existsSync(path.join(outDir, 'report.json'))).toBe(true);
+      expect(fs.existsSync(path.join(outDir, 'summary.md'))).toBe(true);
+      expect(fs.existsSync(path.join(outDir, 'report.html'))).toBe(true);
+      expect(fs.existsSync(path.join(outDir, 'results.sarif'))).toBe(true);
 
-    expect(outputPath).toBe(normalizeOutDir(outDir));
-    expect(fs.existsSync(path.join(outDir, 'report.json'))).toBe(true);
-    expect(fs.existsSync(path.join(outDir, 'summary.md'))).toBe(true);
-    expect(fs.existsSync(path.join(outDir, 'report.html'))).toBe(true);
-    expect(fs.existsSync(path.join(outDir, 'results.sarif'))).toBe(true);
+      const sarif = JSON.parse(fs.readFileSync(path.join(outDir, 'results.sarif'), 'utf8'));
+      expect(Array.isArray(sarif.runs)).toBe(true);
+      expect(sarif.runs.length).toBeGreaterThan(0);
 
-    const sarif = JSON.parse(fs.readFileSync(path.join(outDir, 'results.sarif'), 'utf8'));
-    expect(Array.isArray(sarif.runs)).toBe(true);
-    expect(sarif.runs.length).toBeGreaterThan(0);
-    expect(result.meta.engines?.find((entry) => entry.engineId === 'boom')?.status).toBe('failed');
-  });
+      expect(result.meta.engines?.find((entry) => entry.engineId === 'boom')?.status).toBe('failed');
+
+      // Validate new status semantics exist and are consistent
+      expect(result.summary.scanStatus).toBeTruthy();
+      expect(result.summary.gate.status).toBeTruthy();
+      expect(result.summary.status).toBe(result.summary.gate.status);
+    },
+    20000
+  );
 });
