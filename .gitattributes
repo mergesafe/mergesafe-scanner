@@ -1,0 +1,5 @@
+# Deterministic line endings for report artifacts + goldens (cross-OS)
+*.json text eol=lf
+*.sarif text eol=lf
+*.md text eol=lf
+*.html text eol=lf
