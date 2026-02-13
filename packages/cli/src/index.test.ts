@@ -47,7 +47,11 @@ const runCli = (args: string[]): CliResult => {
 
   const res = hasExecPath
     ? spawnSync(process.execPath, [npmExecPath as string, '-C', 'packages/cli', 'dev', '--', ...args], opts)
-    : spawnSync(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['-C', 'packages/cli', 'dev', '--', ...args], opts);
+    : spawnSync(
+        process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
+        ['-C', 'packages/cli', 'dev', '--', ...args],
+        opts
+      );
 
   return {
     status: res.status,
@@ -222,7 +226,8 @@ describe('golden scan', () => {
 
       const config = {
         outDir,
-        format: ['json', 'sarif', 'md', 'html'] as const,
+        // ✅ no `as const` here (CliConfig expects mutable arrays)
+        format: ['json', 'sarif', 'md', 'html'],
         mode: 'fast' as const,
         timeout: 30,
         concurrency: 1,
@@ -269,7 +274,8 @@ describe('golden scan', () => {
 
       const config = {
         outDir,
-        format: ['json', 'sarif'] as const,
+        // ✅ no `as const`
+        format: ['json', 'sarif'],
         mode: 'fast' as const,
         timeout: 30,
         concurrency: 1,
@@ -307,7 +313,8 @@ describe('golden scan', () => {
     'finding IDs are deterministic across repeated runs (same platform)',
     async () => {
       const configBase = {
-        format: ['json'] as const,
+        // ✅ no `as const`
+        format: ['json'],
         mode: 'fast' as const,
         timeout: 30,
         concurrency: 1,
