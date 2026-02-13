@@ -151,6 +151,7 @@ export interface CiscoConfig {
 
 export interface CliConfig {
   outDir: string;
+  pathMode: 'relative' | 'absolute';
   format: string[];
   mode: 'fast' | 'deep';
   timeout: number;
@@ -215,6 +216,19 @@ function normalizePathForKey(p: string): string {
   return String(p || '').replace(/\\/g, '/');
 }
 
+export function normalizeOutputPath(p: string): string {
+  return normalizePathForKey(p);
+}
+
+export function cmpStr(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+export function cmpNum(a: number, b: number): number {
+  return a - b;
+}
+
 export function findingFingerprint(filePath: string, line: number, signal: string): string {
   const fpPath = normalizePathForKey(filePath);
   const sig = normalizeSignalText(signal);
@@ -229,11 +243,44 @@ const SEVERITY_RANK: Record<Severity, number> = {
   info: 1,
 };
 
+export function findingSeverityRank(severity: Severity): number {
+  return SEVERITY_RANK[severity] ?? 0;
+}
+
 const CONFIDENCE_RANK: Record<Confidence, number> = {
   high: 3,
   medium: 2,
   low: 1,
 };
+
+function compareLocations(a: FindingLocation | undefined, b: FindingLocation | undefined): number {
+  const p = cmpStr(normalizePathForKey(String(a?.filePath ?? '')), normalizePathForKey(String(b?.filePath ?? '')));
+  if (p !== 0) return p;
+  const l = cmpNum(Number(a?.line ?? 0), Number(b?.line ?? 0));
+  if (l !== 0) return l;
+  return cmpNum(Number(a?.column ?? 0), Number(b?.column ?? 0));
+}
+
+export function sortFindingsCanonical(findings: Finding[]): Finding[] {
+  return [...findings].sort((a, b) => {
+    const sev = cmpNum(findingSeverityRank(b.severity), findingSeverityRank(a.severity));
+    if (sev !== 0) return sev;
+
+    const rule = cmpStr(String(a.findingId ?? ''), String(b.findingId ?? ''));
+    if (rule !== 0) return rule;
+
+    const loc = compareLocations(a.locations?.[0], b.locations?.[0]);
+    if (loc !== 0) return loc;
+
+    const fp = cmpStr(String(a.fingerprint ?? ''), String(b.fingerprint ?? ''));
+    if (fp !== 0) return fp;
+
+    const title = cmpStr(String(a.title ?? ''), String(b.title ?? ''));
+    if (title !== 0) return title;
+
+    return cmpStr(String(a.category ?? ''), String(b.category ?? ''));
+  });
+}
 
 function maxSeverity(a: Severity, b: Severity): Severity {
   return SEVERITY_RANK[a] >= SEVERITY_RANK[b] ? a : b;
@@ -478,7 +525,7 @@ export function mergeCanonicalFindings(findings: Finding[]): Finding[] {
       const bp = ENGINE_PRIORITY[bEng] ?? 99;
       if (ap !== bp) return ap - bp;
 
-      return String(a.findingId).localeCompare(String(b.findingId));
+      return cmpStr(String(a.findingId), String(b.findingId));
     })[0];
 
     const allSources: EngineSource[] = [];
@@ -508,29 +555,21 @@ export function mergeCanonicalFindings(findings: Finding[]): Finding[] {
       confidence,
 
       engineSources: dedupeEngineSources(allSources).sort((a, b) => {
-        const e = String(a.engineId).localeCompare(String(b.engineId));
+        const e = cmpStr(String(a.engineId), String(b.engineId));
         if (e !== 0) return e;
-        const r = String(a.engineRuleId ?? '').localeCompare(String(b.engineRuleId ?? ''));
+        const r = cmpStr(String(a.engineRuleId ?? ''), String(b.engineRuleId ?? ''));
         if (r !== 0) return r;
-        return String(a.message ?? '').localeCompare(String(b.message ?? ''));
+        return cmpStr(String(a.message ?? ''), String(b.message ?? ''));
       }),
 
       tags: [...new Set(allTags.map((t) => String(t || '').trim()).filter(Boolean))]
         .filter((t) => !ENGINE_ID_TAGS.has(normalizeTag(t)))
         .filter((t) => !GENERIC_TAGS.has(normalizeTag(t)))
-        .sort((a, b) => a.localeCompare(b)),
+        .sort((a, b) => cmpStr(a, b)),
 
-      references: [...new Set(allRefs.map((r) => String(r || '').trim()).filter(Boolean))].sort((a, b) =>
-        a.localeCompare(b)
-      ),
+      references: [...new Set(allRefs.map((r) => String(r || '').trim()).filter(Boolean))].sort((a, b) => cmpStr(a, b)),
 
-      locations: dedupeLocations(allLocs).sort((a, b) => {
-        const p = String(a.filePath).localeCompare(String(b.filePath));
-        if (p !== 0) return p;
-        const l = (a.line ?? 0) - (b.line ?? 0);
-        if (l !== 0) return l;
-        return (a.column ?? 0) - (b.column ?? 0);
-      }),
+      locations: dedupeLocations(allLocs).sort((a, b) => compareLocations(a, b)),
 
       evidence: pickBestEvidence(allEvidence),
     };
@@ -538,20 +577,7 @@ export function mergeCanonicalFindings(findings: Finding[]): Finding[] {
     merged.push(mergedFinding);
   }
 
-  return merged.sort((a, b) => {
-    const sev = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity];
-    if (sev !== 0) return sev;
-
-    const aLoc = a.locations?.[0];
-    const bLoc = b.locations?.[0];
-    const fp = String(aLoc?.filePath ?? '').localeCompare(String(bLoc?.filePath ?? ''));
-    if (fp !== 0) return fp;
-
-    const ln = Number(aLoc?.line ?? 0) - Number(bLoc?.line ?? 0);
-    if (ln !== 0) return ln;
-
-    return String(a.title ?? '').localeCompare(String(b.title ?? ''));
-  });
+  return sortFindingsCanonical(merged);
 }
 
 export function shouldFail(bySeverity: Record<Severity, number>, failOn: CliConfig['failOn']): boolean {

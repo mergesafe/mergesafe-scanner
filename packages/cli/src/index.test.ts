@@ -71,6 +71,7 @@ describe('golden scan', () => {
       failOn: 'none',
       redact: false,
       autoInstall: false,
+      pathMode: 'relative',
     });
 
     const outputPath = writeOutputs(result, {
@@ -82,6 +83,7 @@ describe('golden scan', () => {
       failOn: 'none',
       redact: false,
       autoInstall: false,
+      pathMode: 'relative',
     });
 
     expect(outputPath).toBe(normalizeOutDir(outDir));
@@ -112,6 +114,7 @@ describe('golden scan', () => {
       failOn: 'high',
       redact: false,
       autoInstall: false,
+      pathMode: 'relative',
     });
 
     expect(result.summary.bySeverity.high + result.summary.bySeverity.critical).toBeGreaterThan(0);
@@ -124,6 +127,7 @@ describe('option parsing utilities', () => {
     const config = resolveConfig({});
     expect(config.engines).toEqual([...DEFAULT_ENGINES]);
     expect(config.autoInstall).toBe(true);
+    expect(config.pathMode).toBe('relative');
   });
 
   test('parseListOpt accepts comma and whitespace-separated values', () => {
@@ -167,6 +171,7 @@ describe('help output', () => {
   test('getHelpText is deterministic and includes usage', () => {
     expect(getHelpText('general')).toContain('mergesafe --help');
     expect(getHelpText('scan')).toContain('mergesafe scan <path> [options]');
+    expect(getHelpText('scan')).toContain('--path-mode <relative|absolute>');
     expect(getHelpText('list-engines')).toContain('mergesafe --list-engines');
   });
 
@@ -241,6 +246,7 @@ describe('resilience', () => {
         failOn: 'none',
         redact: false,
         autoInstall: false,
+      pathMode: 'relative',
         engines: ['boom'],
       },
       [failingAdapter]
@@ -255,6 +261,7 @@ describe('resilience', () => {
       failOn: 'none',
       redact: false,
       autoInstall: false,
+      pathMode: 'relative',
       engines: ['boom'],
     });
 
@@ -268,5 +275,125 @@ describe('resilience', () => {
     expect(Array.isArray(sarif.runs)).toBe(true);
     expect(sarif.runs.length).toBeGreaterThan(0);
     expect(result.meta.engines?.find((entry) => entry.engineId === 'boom')?.status).toBe('failed');
+  });
+});
+
+function cmpStr(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+function cmpNum(a: number, b: number): number {
+  return a - b;
+}
+
+const levelRank: Record<string, number> = { error: 1, warning: 2, note: 3 };
+
+
+function sanitizeReport(input: any): any {
+  const clone = structuredClone(input);
+  if (clone.meta) {
+    clone.meta.generatedAt = '<redacted-timestamp>';
+    clone.meta.engines = (clone.meta.engines ?? []).map((engine: any) => ({ ...engine, durationMs: 0 }));
+  }
+  return clone;
+}
+
+
+function sanitizeSarif(input: any): any {
+  const clone = structuredClone(input);
+  for (const run of clone.runs ?? []) {
+    for (const result of run.results ?? []) {
+      result.locations = (result.locations ?? [])
+        .map((location: any) => {
+          const region = location.physicalLocation?.region ?? {};
+          return {
+            physicalLocation: {
+              artifactLocation: { uri: String(location.physicalLocation?.artifactLocation?.uri ?? '.').replace(/\\/g, '/') },
+              region: {
+                startLine: Math.max(1, Number(region.startLine ?? 1)),
+                startColumn: Math.max(1, Number(region.startColumn ?? 1)),
+                endLine: Math.max(1, Number(region.endLine ?? region.startLine ?? 1)),
+                endColumn: Math.max(1, Number(region.endColumn ?? region.startColumn ?? 1)),
+              },
+            },
+          };
+        })
+        .sort((a: any, b: any) => {
+          const aLoc = a.physicalLocation;
+          const bLoc = b.physicalLocation;
+          const uri = cmpStr(String(aLoc.artifactLocation.uri ?? '.'), String(bLoc.artifactLocation.uri ?? '.'));
+          if (uri !== 0) return uri;
+          const sl = cmpNum(aLoc.region.startLine, bLoc.region.startLine);
+          if (sl !== 0) return sl;
+          const sc = cmpNum(aLoc.region.startColumn, bLoc.region.startColumn);
+          if (sc !== 0) return sc;
+          const el = cmpNum(aLoc.region.endLine, bLoc.region.endLine);
+          if (el !== 0) return el;
+          return cmpNum(aLoc.region.endColumn, bLoc.region.endColumn);
+        });
+    }
+
+    run.results = (run.results ?? []).sort((a: any, b: any) => {
+      const level = cmpNum(levelRank[a.level] ?? 99, levelRank[b.level] ?? 99);
+      if (level !== 0) return level;
+      const aP = a.locations?.[0]?.physicalLocation;
+      const bP = b.locations?.[0]?.physicalLocation;
+      const uri = cmpStr(String(aP?.artifactLocation?.uri ?? '.'), String(bP?.artifactLocation?.uri ?? '.'));
+      if (uri !== 0) return uri;
+      const line = cmpNum(Number(aP?.region?.startLine ?? 1), Number(bP?.region?.startLine ?? 1));
+      if (line !== 0) return line;
+      const col = cmpNum(Number(aP?.region?.startColumn ?? 1), Number(bP?.region?.startColumn ?? 1));
+      if (col !== 0) return col;
+      return cmpStr(String(a.message?.text ?? ''), String(b.message?.text ?? ''));
+    });
+  }
+  return clone;
+}
+
+describe('golden deterministic outputs', () => {
+  test('matches sanitized json and sarif goldens', async () => {
+    const goldenDir = path.resolve(repoRoot, 'packages/cli/testdata/goldens/node-unsafe-server');
+    const reportGolden = path.join(goldenDir, 'report.json');
+    const sarifGolden = path.join(goldenDir, 'results.sarif');
+
+    const tmpOut = fs.mkdtempSync(path.join(os.tmpdir(), 'mergesafe-golden-'));
+    const result = await runScan(fixture, {
+      outDir: tmpOut,
+      format: ['json', 'sarif'],
+      mode: 'fast',
+      timeout: 30,
+      concurrency: 4,
+      failOn: 'none',
+      redact: false,
+      autoInstall: false,
+      pathMode: 'relative',
+    });
+    writeOutputs(result, {
+      outDir: tmpOut,
+      format: ['json', 'sarif'],
+      mode: 'fast',
+      timeout: 30,
+      concurrency: 4,
+      failOn: 'none',
+      redact: false,
+      autoInstall: false,
+      pathMode: 'relative',
+    });
+
+    const report = sanitizeReport(JSON.parse(fs.readFileSync(path.join(tmpOut, 'report.json'), 'utf8')));
+    const sarif = sanitizeSarif(JSON.parse(fs.readFileSync(path.join(tmpOut, 'results.sarif'), 'utf8')));
+
+    fs.mkdirSync(goldenDir, { recursive: true });
+    if (process.env.UPDATE_GOLDENS === '1') {
+      fs.writeFileSync(reportGolden, `${JSON.stringify(report, null, 2)}\n`);
+      fs.writeFileSync(sarifGolden, `${JSON.stringify(sarif, null, 2)}\n`);
+    }
+
+    const expectedReport = JSON.parse(fs.readFileSync(reportGolden, 'utf8'));
+    const expectedSarif = JSON.parse(fs.readFileSync(sarifGolden, 'utf8'));
+
+    expect(report).toEqual(expectedReport);
+    expect(sarif).toEqual(expectedSarif);
   });
 });

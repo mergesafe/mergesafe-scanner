@@ -3,7 +3,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import YAML from 'yaml';
-import { DEFAULT_ENGINES, summarize, type CliConfig, type ScanResult } from '@mergesafe/core';
+import {
+  DEFAULT_ENGINES,
+  normalizeOutputPath,
+  sortFindingsCanonical,
+  summarize,
+  type CliConfig,
+  type ScanResult,
+} from '@mergesafe/core';
 import { runEngines, defaultAdapters, listEngines } from '@mergesafe/engines';
 import { generateHtmlReport, generateSummaryMarkdown } from '@mergesafe/report';
 import { mergeSarifRuns } from '@mergesafe/sarif';
@@ -113,6 +120,7 @@ export function getHelpText(target: ParsedArgs['helpTarget'] = 'general'): strin
     '  --auto-install <true|false>    Auto-install missing tools (default: true)',
     '  --no-auto-install              Disable tool auto-install',
     '  --redact                       Redact sensitive fields in output',
+    '  --path-mode <relative|absolute> Path rendering mode (default: relative)',
     '  --no-cisco                     Remove Cisco engine from selected engines',
   ].join('\n');
 
@@ -269,6 +277,44 @@ function parseBooleanOpt(value: string | boolean | undefined, defaultValue: bool
   return defaultValue;
 }
 
+
+function parsePathMode(raw: unknown): 'relative' | 'absolute' {
+  const value = String(raw ?? 'relative').trim().toLowerCase();
+  return value === 'absolute' ? 'absolute' : 'relative';
+}
+
+function toDisplayPath(filePath: string, scanRoot: string, mode: 'relative' | 'absolute'): string {
+  const absolute = path.resolve(scanRoot, filePath);
+  const resolved = mode === 'absolute' ? absolute : path.relative(scanRoot, absolute) || '.';
+  return normalizeOutputPath(resolved);
+}
+
+function normalizeResultPaths(result: ScanResult, scanRoot: string, mode: 'relative' | 'absolute'): ScanResult {
+  return {
+    ...result,
+    meta: {
+      ...result.meta,
+      scannedPath: mode === 'absolute' ? normalizeOutputPath(path.resolve(scanRoot)) : '.',
+      engines: (result.meta.engines ?? []).map((entry) => ({
+        ...entry,
+        artifacts: entry.artifacts
+          ? {
+              json: entry.artifacts.json ? normalizeOutputPath(entry.artifacts.json) : entry.artifacts.json,
+              sarif: entry.artifacts.sarif ? normalizeOutputPath(entry.artifacts.sarif) : entry.artifacts.sarif,
+            }
+          : entry.artifacts,
+      })),
+    },
+    findings: sortFindingsCanonical(result.findings).map((finding) => ({
+      ...finding,
+      locations: (finding.locations ?? []).map((loc) => ({
+        ...loc,
+        filePath: toDisplayPath(loc.filePath, scanRoot, mode),
+      })),
+    })),
+  };
+}
+
 function parseCiscoMode(raw: unknown, fallback: CiscoMode): CiscoMode {
   if (typeof raw !== 'string') return fallback;
   const v = raw.trim().toLowerCase();
@@ -349,6 +395,7 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
 
   return {
     outDir: normalizeOutDir((opts['out-dir'] as string) ?? cfg.outDir),
+    pathMode: parsePathMode((opts['path-mode'] as string | undefined) ?? cfg.pathMode),
     format: format.length ? format : [...DEFAULT_FORMATS],
     mode: ((opts.mode as CliConfig['mode']) ?? cfg.mode ?? 'fast'),
     timeout: Number((opts.timeout as string) ?? cfg.timeout ?? 30),
@@ -396,6 +443,7 @@ export async function runScan(scanPath: string, config: CliConfigExt, adapters =
 
 export function writeOutputs(result: ScanResult, config: CliConfigExt) {
   const outDirAbs = normalizeOutDir(config.outDir);
+  const normalizedResult = normalizeResultPaths(result, result.meta.scannedPath, config.pathMode ?? 'relative');
   fs.mkdirSync(outDirAbs, { recursive: true });
 
   const wants = new Set(
@@ -407,15 +455,15 @@ export function writeOutputs(result: ScanResult, config: CliConfigExt) {
     for (const format of DEFAULT_FORMATS) wants.add(format);
   }
 
-  if (wants.has('json')) fs.writeFileSync(path.join(outDirAbs, 'report.json'), JSON.stringify(result, null, 2));
-  if (wants.has('md')) fs.writeFileSync(path.join(outDirAbs, 'summary.md'), generateSummaryMarkdown(result));
-  if (wants.has('html')) fs.writeFileSync(path.join(outDirAbs, 'report.html'), generateHtmlReport(result));
+  if (wants.has('json')) fs.writeFileSync(path.join(outDirAbs, 'report.json'), JSON.stringify(normalizedResult, null, 2));
+  if (wants.has('md')) fs.writeFileSync(path.join(outDirAbs, 'summary.md'), generateSummaryMarkdown(normalizedResult));
+  if (wants.has('html')) fs.writeFileSync(path.join(outDirAbs, 'report.html'), generateHtmlReport(normalizedResult));
   if (wants.has('sarif'))
     mergeSarifRuns({
       outDir: outDirAbs,
-      enginesMeta: result.meta.engines ?? [],
-      canonicalFindings: result.findings,
-      redact: result.meta.redacted,
+      enginesMeta: normalizedResult.meta.engines ?? [],
+      canonicalFindings: normalizedResult.findings,
+      redact: normalizedResult.meta.redacted,
     });
 
   return outDirAbs;

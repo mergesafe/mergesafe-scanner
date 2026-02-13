@@ -1,6 +1,6 @@
 // packages/report/src/index.ts
 import path from 'node:path';
-import type { Finding, ScanResult } from '@mergesafe/core';
+import { cmpStr, sortFindingsCanonical, type Finding, type ScanResult } from '@mergesafe/core';
 
 const severityRank: Record<Finding['severity'], number> = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
 const confidenceRank: Record<Finding['confidence'], number> = { high: 3, medium: 2, low: 1 };
@@ -87,7 +87,7 @@ function engineLabelMap(result: ScanResult): Record<string, string> {
 
 function uniqueEngineIds(f: Finding): string[] {
   return [...new Set((f.engineSources ?? []).map((s) => String(s.engineId ?? '').trim()).filter(Boolean))].sort(
-    (a, b) => a.localeCompare(b)
+    (a, b) => cmpStr(a, b)
   );
 }
 
@@ -278,7 +278,7 @@ export function generateHtmlReport(result: ScanResult): string {
     })
     .join('');
 
-  const rows = result.findings
+  const rows = sortFindingsCanonical(result.findings)
     .map((f, i) => {
       const ids = uniqueEngineIds(f);
       const names = ids.map((id) => label[id] ?? id);
@@ -294,7 +294,7 @@ export function generateHtmlReport(result: ScanResult): string {
 
       const engineDetail = (f.engineSources ?? [])
         .slice()
-        .sort((a, b) => String(a.engineId).localeCompare(String(b.engineId)))
+        .sort((a, b) => cmpStr(String(a.engineId), String(b.engineId)))
         .map(
           (source) =>
             `<li><strong>${escapeHtml(label[source.engineId] ?? source.engineId)}</strong> (<code>${escapeHtml(
