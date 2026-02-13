@@ -3,40 +3,25 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import YAML from 'yaml';
-import { DEFAULT_ENGINES, summarize, type CliConfig, type ScanResult } from '@mergesafe/core';
+import {
+  DEFAULT_ENGINES,
+  summarize,
+  type CliConfig,
+  type ScanResult,
+  type PathMode,
+  type CiscoMode,
+  type CiscoConfig,
+  normalizeFindingPaths,
+  stableSortFindings,
+  normalizePathForOutput,
+  toPosixPath,
+} from '@mergesafe/core';
 import { runEngines, defaultAdapters, listEngines } from '@mergesafe/engines';
 import { generateHtmlReport, generateSummaryMarkdown } from '@mergesafe/report';
 import { mergeSarifRuns } from '@mergesafe/sarif';
 
 const DEFAULT_FORMATS = ['json', 'html', 'sarif', 'md'] as const;
 const ALLOWED_FORMATS = new Set(DEFAULT_FORMATS);
-
-type CiscoMode = 'auto' | 'static' | 'known-configs' | 'config' | 'remote' | 'stdio';
-
-type CiscoCliConfig = {
-  enabled: boolean;
-  mode: CiscoMode;
-
-  // static
-  toolsPath?: string;
-
-  // config/remote/stdio
-  configPath?: string;
-  serverUrl?: string;
-  stdioCommand?: string;
-  stdioArgs?: string[];
-
-  // auth
-  bearerToken?: string;
-  headers?: string[];
-
-  // analyzers (default yara for offline)
-  analyzers?: string;
-};
-
-export type CliConfigExt = CliConfig & {
-  cisco?: CiscoCliConfig;
-};
 
 type OptValue = string | boolean | string[];
 type ParsedArgs = {
@@ -47,18 +32,9 @@ type ParsedArgs = {
   helpTarget?: 'general' | 'scan' | 'list-engines';
 };
 
-const BOOLEAN_FLAGS = new Set([
-  'list-engines',
-  'redact',
-  'no-auto-install',
-  'help',
-  'no-cisco',
-]);
+const BOOLEAN_FLAGS = new Set(['list-engines', 'redact', 'no-auto-install', 'help', 'no-cisco']);
 
-const REPEATABLE_FLAGS = new Set([
-  'cisco-header',
-  'cisco-stdio-arg',
-]);
+const REPEATABLE_FLAGS = new Set(['cisco-header', 'cisco-stdio-arg']);
 
 function pushOpt(opts: Record<string, OptValue>, key: string, value: string) {
   const cur = opts[key];
@@ -114,9 +90,10 @@ export function getHelpText(target: ParsedArgs['helpTarget'] = 'general'): strin
     '  --no-auto-install              Disable tool auto-install',
     '  --redact                       Redact sensitive fields in output',
     '  --no-cisco                     Remove Cisco engine from selected engines',
+    '  --path-mode <relative|absolute> Output path mode for findings (default: relative)',
   ].join('\n');
 
-  const listEngines = [
+  const listEnginesText = [
     'MergeSafe list engines',
     '',
     'Usage:',
@@ -127,7 +104,7 @@ export function getHelpText(target: ParsedArgs['helpTarget'] = 'general'): strin
   ].join('\n');
 
   if (target === 'scan') return scan;
-  if (target === 'list-engines') return listEngines;
+  if (target === 'list-engines') return listEnginesText;
   return general;
 }
 
@@ -233,11 +210,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
   return { command: 'scan', scanPath, opts };
 }
 
-function loadConfig(configPath?: string): Partial<CliConfigExt> {
+function loadConfig(configPath?: string): Partial<CliConfig> {
   const candidate = configPath ?? (fs.existsSync('mergesafe.yml') ? 'mergesafe.yml' : undefined);
   if (!candidate || !fs.existsSync(candidate)) return {};
   const data = YAML.parse(fs.readFileSync(candidate, 'utf8'));
-  return (data ?? {}) as Partial<CliConfigExt>;
+  return (data ?? {}) as Partial<CliConfig>;
 }
 
 export function normalizeOutDir(
@@ -273,10 +250,16 @@ function parseCiscoMode(raw: unknown, fallback: CiscoMode): CiscoMode {
   if (typeof raw !== 'string') return fallback;
   const v = raw.trim().toLowerCase();
   const allowed: CiscoMode[] = ['auto', 'static', 'known-configs', 'config', 'remote', 'stdio'];
-  return (allowed.includes(v as CiscoMode) ? (v as CiscoMode) : fallback);
+  return allowed.includes(v as CiscoMode) ? (v as CiscoMode) : fallback;
 }
 
-export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
+function parsePathMode(raw: unknown, fallback: PathMode): PathMode {
+  if (typeof raw !== 'string') return fallback;
+  const v = raw.trim().toLowerCase();
+  return v === 'absolute' || v === 'relative' ? (v as PathMode) : fallback;
+}
+
+export function resolveConfig(opts: Record<string, OptValue>): CliConfig {
   const cfg = loadConfig(opts.config as string | undefined);
 
   const parsedFormats = parseListOpt(
@@ -286,8 +269,8 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
   const format = parsedFormats.filter((entry) => ALLOWED_FORMATS.has(entry as (typeof DEFAULT_FORMATS)[number]));
 
   // Engines list (default includes cisco unless user disables)
-  const enginesFromArgs = (opts.engines as string | undefined);
-  const enginesFromCfg = (cfg.engines as string | string[] | undefined);
+  const enginesFromArgs = opts.engines as string | undefined;
+  const enginesFromCfg = cfg.engines as string | string[] | undefined;
 
   let engines = parseListOpt(enginesFromArgs ?? enginesFromCfg, [...DEFAULT_ENGINES]);
 
@@ -298,9 +281,7 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
   // Cisco settings (only meaningful if engine is selected)
   const ciscoEnabled = engines.includes('cisco');
 
-  const ciscoToolsPath =
-    (opts['cisco-tools'] as string | undefined) ??
-    (cfg.cisco?.toolsPath as string | undefined);
+  const ciscoToolsPath = (opts['cisco-tools'] as string | undefined) ?? (cfg.cisco?.toolsPath as string | undefined);
 
   const ciscoMode = parseCiscoMode(
     (opts['cisco-mode'] as string | undefined) ?? (cfg.cisco?.mode as string | undefined),
@@ -308,44 +289,33 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
   );
 
   const ciscoHeadersRaw =
-    (opts['cisco-header'] as string | string[] | undefined) ??
-    (cfg.cisco?.headers as unknown as string | string[] | undefined);
+    (opts['cisco-header'] as string | string[] | undefined) ?? (cfg.cisco?.headers as unknown as string | string[] | undefined);
 
   const ciscoStdioArgsRaw =
-    (opts['cisco-stdio-arg'] as string | string[] | undefined) ??
-    (cfg.cisco?.stdioArgs as unknown as string | string[] | undefined);
+    (opts['cisco-stdio-arg'] as string | string[] | undefined) ?? (cfg.cisco?.stdioArgs as unknown as string | string[] | undefined);
 
-  const ciscoConfig: CiscoCliConfig = {
+  const ciscoConfig: CiscoConfig = {
     enabled: ciscoEnabled,
     mode: ciscoMode,
 
     toolsPath: ciscoToolsPath,
 
-    configPath:
-      (opts['cisco-config-path'] as string | undefined) ??
-      (cfg.cisco?.configPath as string | undefined),
+    configPath: (opts['cisco-config-path'] as string | undefined) ?? (cfg.cisco?.configPath as string | undefined),
 
-    serverUrl:
-      (opts['cisco-server-url'] as string | undefined) ??
-      (cfg.cisco?.serverUrl as string | undefined),
+    serverUrl: (opts['cisco-server-url'] as string | undefined) ?? (cfg.cisco?.serverUrl as string | undefined),
 
-    stdioCommand:
-      (opts['cisco-stdio-command'] as string | undefined) ??
-      (cfg.cisco?.stdioCommand as string | undefined),
+    stdioCommand: (opts['cisco-stdio-command'] as string | undefined) ?? (cfg.cisco?.stdioCommand as string | undefined),
 
     stdioArgs: parseListOpt(ciscoStdioArgsRaw, []),
 
-    bearerToken:
-      (opts['cisco-bearer-token'] as string | undefined) ??
-      (cfg.cisco?.bearerToken as string | undefined),
+    bearerToken: (opts['cisco-bearer-token'] as string | undefined) ?? (cfg.cisco?.bearerToken as string | undefined),
 
     headers: parseListOpt(ciscoHeadersRaw, []),
 
-    analyzers:
-      (opts['cisco-analyzers'] as string | undefined) ??
-      (cfg.cisco?.analyzers as string | undefined) ??
-      'yara',
+    analyzers: (opts['cisco-analyzers'] as string | undefined) ?? (cfg.cisco?.analyzers as string | undefined) ?? 'yara',
   };
+
+  const pathMode = parsePathMode((opts['path-mode'] as any) ?? (cfg.pathMode as any), 'relative');
 
   return {
     outDir: normalizeOutDir((opts['out-dir'] as string) ?? cfg.outDir),
@@ -357,44 +327,62 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
     redact: Boolean(opts.redact ?? cfg.redact ?? false),
     autoInstall: opts['no-auto-install']
       ? false
-      : parseBooleanOpt(
-          (opts['auto-install'] as string | boolean | undefined) ?? (cfg.autoInstall as boolean | undefined),
-          true
-        ),
+      : parseBooleanOpt((opts['auto-install'] as any) ?? (cfg.autoInstall as any), true),
     engines,
 
-    // Extra config consumed by adapters (Step 3)
+    // PR4
+    pathMode,
+
+    // Extra config consumed by adapters
     cisco: ciscoConfig,
   };
 }
 
-export async function runScan(scanPath: string, config: CliConfigExt, adapters = defaultAdapters): Promise<ScanResult> {
-  const selected = config.engines ?? [...DEFAULT_ENGINES];
-  const { findings, meta } = await runEngines({ scanPath, config }, selected, adapters);
-  const summary = summarize(findings, config.failOn);
+export async function runScan(scanPath: string, config: CliConfig, adapters = defaultAdapters): Promise<ScanResult> {
+  const scanRootAbs = path.resolve(scanPath);
+  const pathMode: PathMode = config.pathMode ?? 'relative';
+
+  // Ensure downstream has a stable anchor for relativizing paths.
+  const configWithRoot: CliConfig = { ...config, scanRoot: scanRootAbs, pathMode };
+
+  const selected = configWithRoot.engines ?? [...DEFAULT_ENGINES];
+  const { findings, meta } = await runEngines({ scanPath: scanRootAbs, config: configWithRoot }, selected, adapters);
+
+  // PR4: single canonical normalization + stable sort for outputs
+  const normalizedFindings = stableSortFindings(
+    normalizeFindingPaths(findings, { scanRoot: scanRootAbs, pathMode })
+  );
+
+  const summary = summarize(normalizedFindings, configWithRoot.failOn);
+
+  // PR4: avoid absolute machine paths in default outputs
+  const scannedPathForMeta =
+    pathMode === 'absolute'
+      ? toPosixPath(scanRootAbs)
+      : normalizePathForOutput(scanRootAbs, { scanRoot: process.cwd(), pathMode: 'relative' });
 
   return {
     meta: {
-      scannedPath: scanPath,
+      scannedPath: scannedPathForMeta,
       generatedAt: new Date().toISOString(),
-      mode: config.mode,
-      timeout: config.timeout,
-      concurrency: config.concurrency,
-      redacted: config.redact,
+      mode: configWithRoot.mode,
+      timeout: configWithRoot.timeout,
+      concurrency: configWithRoot.concurrency,
+      redacted: configWithRoot.redact,
       engines: meta,
     },
     summary,
-    findings,
+    findings: normalizedFindings,
     byEngine: Object.fromEntries(
       meta.map((entry) => [
         entry.engineId,
-        findings.filter((finding) => finding.engineSources.some((source) => source.engineId === entry.engineId)).length,
+        normalizedFindings.filter((finding) => finding.engineSources.some((source) => source.engineId === entry.engineId)).length,
       ])
     ),
   };
 }
 
-export function writeOutputs(result: ScanResult, config: CliConfigExt) {
+export function writeOutputs(result: ScanResult, config: CliConfig) {
   const outDirAbs = normalizeOutDir(config.outDir);
   fs.mkdirSync(outDirAbs, { recursive: true });
 
@@ -449,7 +437,8 @@ async function main() {
     return;
   }
 
-  const result = await runScan(resolveScanPath(parsed.scanPath!), config);
+  const scanRootAbs = resolveScanPath(parsed.scanPath!);
+  const result = await runScan(scanRootAbs, config);
   const outputPath = writeOutputs(result, config);
 
   console.log(`MergeSafe: wrote outputs to ${outputPath}`);
