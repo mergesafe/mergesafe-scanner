@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { describe, expect, test } from 'vitest';
+import { beforeAll, describe, expect, test } from 'vitest';
 import {
   runScan,
   writeOutputs,
@@ -19,9 +19,8 @@ import type { EngineAdapter } from '@mergesafe/engines';
 import { DEFAULT_ENGINES } from '@mergesafe/core';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const fixture = path.resolve(here, '../../../fixtures/node-unsafe-server');
-const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mergesafe-test-golden-'));
 const repoRoot = path.resolve(here, '../../..');
+const fixture = path.resolve(repoRoot, 'fixtures/node-unsafe-server');
 
 type CliResult = {
   status: number | null;
@@ -29,6 +28,17 @@ type CliResult = {
   stderr: string;
   error?: Error;
   signal: NodeJS.Signals | null;
+};
+
+const mkTempOutDir = (prefix: string) =>
+  fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-${Date.now()}-`));
+
+const rmTempOutDir = (dir: string) => {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // ignore cleanup errors on Windows file locks
+  }
 };
 
 const runCli = (args: string[]): CliResult => {
@@ -41,13 +51,17 @@ const runCli = (args: string[]): CliResult => {
     cwd: repoRoot,
     encoding: 'utf8' as const,
     windowsHide: true,
-    timeout: 20000,
+    timeout: 30_000,
     env: { ...process.env },
   };
 
   const res = hasExecPath
     ? spawnSync(process.execPath, [npmExecPath as string, '-C', 'packages/cli', 'dev', '--', ...args], opts)
-    : spawnSync(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['-C', 'packages/cli', 'dev', '--', ...args], opts);
+    : spawnSync(
+        process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
+        ['-C', 'packages/cli', 'dev', '--', ...args],
+        opts
+      );
 
   return {
     status: res.status,
@@ -58,65 +72,93 @@ const runCli = (args: string[]): CliResult => {
   };
 };
 
+beforeAll(() => {
+  // Guardrail: if fixture path breaks, scan might accidentally run on repoRoot and time out.
+  expect(fs.existsSync(fixture)).toBe(true);
+});
+
 describe('golden scan', () => {
-  test('creates report structures and formats', async () => {
-    fs.rmSync(outDir, { recursive: true, force: true });
+  test(
+    'creates report structures and formats',
+    async () => {
+      const outDir = mkTempOutDir('mergesafe-test-golden');
+      try {
+        const result = await runScan(fixture, {
+          outDir,
+          format: ['json', 'sarif', 'md', 'html'],
+          mode: 'fast',
+          timeout: 30,
+          concurrency: 1,
 
-    const result = await runScan(fixture, {
-      outDir,
-      format: ['json', 'sarif', 'md', 'html'],
-      mode: 'fast',
-      timeout: 30,
-      concurrency: 4,
-      failOn: 'none',
-      redact: false,
-      autoInstall: false,
-    });
+          // Critical for speed + determinism in tests:
+          // run ONLY deterministic mergesafe engine; do not depend on external binaries.
+          engines: ['mergesafe'],
+          autoInstall: false,
 
-    const outputPath = writeOutputs(result, {
-      outDir,
-      format: ['json', 'sarif', 'md', 'html'],
-      mode: 'fast',
-      timeout: 30,
-      concurrency: 4,
-      failOn: 'none',
-      redact: false,
-      autoInstall: false,
-    });
+          failOn: 'none',
+          redact: false,
+        });
 
-    expect(outputPath).toBe(normalizeOutDir(outDir));
-    expect(fs.existsSync(path.join(outDir, 'report.json'))).toBe(true);
-    expect(fs.existsSync(path.join(outDir, 'results.sarif'))).toBe(true);
+        const outputPath = writeOutputs(result, {
+          outDir,
+          format: ['json', 'sarif', 'md', 'html'],
+          mode: 'fast',
+          timeout: 30,
+          concurrency: 1,
+          engines: ['mergesafe'],
+          autoInstall: false,
+          failOn: 'none',
+          redact: false,
+        });
 
-    const sarif = JSON.parse(fs.readFileSync(path.join(outDir, 'results.sarif'), 'utf8'));
-    expect(Array.isArray(sarif.runs)).toBe(true);
-    expect(sarif.runs.length).toBeGreaterThan(0);
+        expect(outputPath).toBe(normalizeOutDir(outDir));
+        expect(fs.existsSync(path.join(outDir, 'report.json'))).toBe(true);
+        expect(fs.existsSync(path.join(outDir, 'results.sarif'))).toBe(true);
 
-    expect(fs.existsSync(path.join(outDir, 'summary.md'))).toBe(true);
-    expect(fs.existsSync(path.join(outDir, 'report.html'))).toBe(true);
-    expect(result.findings.length).toBeGreaterThan(0);
+        const sarif = JSON.parse(fs.readFileSync(path.join(outDir, 'results.sarif'), 'utf8'));
+        expect(Array.isArray(sarif.runs)).toBe(true);
+        expect(sarif.runs.length).toBeGreaterThan(0);
 
-    const md = fs.readFileSync(path.join(outDir, 'summary.md'), 'utf8');
-    expect(md).toContain('Scan: **Completed**');
-    expect(md).toContain('Risk grade:');
-    expect(md).toContain('Top Findings');
-  });
+        expect(fs.existsSync(path.join(outDir, 'summary.md'))).toBe(true);
+        expect(fs.existsSync(path.join(outDir, 'report.html'))).toBe(true);
+        expect(result.findings.length).toBeGreaterThan(0);
 
-  test('fail-on high returns fail status', async () => {
-    const result = await runScan(fixture, {
-      outDir,
-      format: ['json'],
-      mode: 'fast',
-      timeout: 30,
-      concurrency: 4,
-      failOn: 'high',
-      redact: false,
-      autoInstall: false,
-    });
+        const md = fs.readFileSync(path.join(outDir, 'summary.md'), 'utf8');
+        expect(md).toContain('Scan: **Completed**');
+        expect(md).toContain('Risk grade:');
+        expect(md).toContain('Top Findings');
+      } finally {
+        rmTempOutDir(outDir);
+      }
+    },
+    30_000
+  );
 
-    expect(result.summary.bySeverity.high + result.summary.bySeverity.critical).toBeGreaterThan(0);
-    expect(result.summary.status).toBe('FAIL');
-  });
+  test(
+    'fail-on high returns fail status',
+    async () => {
+      const outDir = mkTempOutDir('mergesafe-test-golden');
+      try {
+        const result = await runScan(fixture, {
+          outDir,
+          format: ['json'],
+          mode: 'fast',
+          timeout: 30,
+          concurrency: 1,
+          engines: ['mergesafe'],
+          autoInstall: false,
+          failOn: 'high',
+          redact: false,
+        });
+
+        expect(result.summary.bySeverity.high + result.summary.bySeverity.critical).toBeGreaterThan(0);
+        expect(result.summary.status).toBe('FAIL');
+      } finally {
+        rmTempOutDir(outDir);
+      }
+    },
+    30_000
+  );
 });
 
 describe('option parsing utilities', () => {
@@ -215,24 +257,40 @@ describe('help output', () => {
 
 describe('resilience', () => {
   test('scan completes and writes outputs when an engine fails', async () => {
-    const failingAdapter: EngineAdapter = {
-      engineId: 'boom',
-      displayName: 'Boom engine',
-      installHint: 'none',
-      async version() {
-        return '1.0';
-      },
-      async isAvailable() {
-        return true;
-      },
-      async run() {
-        throw new Error('simulated failure');
-      },
-    };
+    const outDir = mkTempOutDir('mergesafe-test-resilience');
+    try {
+      const failingAdapter: EngineAdapter = {
+        engineId: 'boom',
+        displayName: 'Boom engine',
+        installHint: 'none',
+        async version() {
+          return '1.0';
+        },
+        async isAvailable() {
+          return true;
+        },
+        async run() {
+          throw new Error('simulated failure');
+        },
+      };
 
-    const result = await runScan(
-      fixture,
-      {
+      const result = await runScan(
+        fixture,
+        {
+          outDir,
+          format: ['json', 'sarif', 'md', 'html'],
+          mode: 'fast',
+          timeout: 30,
+          concurrency: 1,
+          failOn: 'none',
+          redact: false,
+          autoInstall: false,
+          engines: ['boom'],
+        },
+        [failingAdapter]
+      );
+
+      const outputPath = writeOutputs(result, {
         outDir,
         format: ['json', 'sarif', 'md', 'html'],
         mode: 'fast',
@@ -242,31 +300,20 @@ describe('resilience', () => {
         redact: false,
         autoInstall: false,
         engines: ['boom'],
-      },
-      [failingAdapter]
-    );
+      });
 
-    const outputPath = writeOutputs(result, {
-      outDir,
-      format: ['json', 'sarif', 'md', 'html'],
-      mode: 'fast',
-      timeout: 30,
-      concurrency: 1,
-      failOn: 'none',
-      redact: false,
-      autoInstall: false,
-      engines: ['boom'],
-    });
+      expect(outputPath).toBe(normalizeOutDir(outDir));
+      expect(fs.existsSync(path.join(outDir, 'report.json'))).toBe(true);
+      expect(fs.existsSync(path.join(outDir, 'summary.md'))).toBe(true);
+      expect(fs.existsSync(path.join(outDir, 'report.html'))).toBe(true);
+      expect(fs.existsSync(path.join(outDir, 'results.sarif'))).toBe(true);
 
-    expect(outputPath).toBe(normalizeOutDir(outDir));
-    expect(fs.existsSync(path.join(outDir, 'report.json'))).toBe(true);
-    expect(fs.existsSync(path.join(outDir, 'summary.md'))).toBe(true);
-    expect(fs.existsSync(path.join(outDir, 'report.html'))).toBe(true);
-    expect(fs.existsSync(path.join(outDir, 'results.sarif'))).toBe(true);
-
-    const sarif = JSON.parse(fs.readFileSync(path.join(outDir, 'results.sarif'), 'utf8'));
-    expect(Array.isArray(sarif.runs)).toBe(true);
-    expect(sarif.runs.length).toBeGreaterThan(0);
-    expect(result.meta.engines?.find((entry) => entry.engineId === 'boom')?.status).toBe('failed');
+      const sarif = JSON.parse(fs.readFileSync(path.join(outDir, 'results.sarif'), 'utf8'));
+      expect(Array.isArray(sarif.runs)).toBe(true);
+      expect(sarif.runs.length).toBeGreaterThan(0);
+      expect(result.meta.engines?.find((entry) => entry.engineId === 'boom')?.status).toBe('failed');
+    } finally {
+      rmTempOutDir(outDir);
+    }
   });
 });
