@@ -171,6 +171,9 @@ function writeDeterministicJson(filePath: string, obj: any) {
   fs.writeFileSync(filePath, txt, 'utf8');
 }
 
+// NOTE: These are intentionally MUTABLE arrays because CliConfig expects string[]
+const MERGESAFE_ONLY_ENGINES: string[] = ['mergesafe'];
+
 describe('golden scan', () => {
   test(
     'creates report structures and formats (mergesafe-only, deterministic)',
@@ -189,7 +192,7 @@ describe('golden scan', () => {
         redact: false,
         autoInstall: false,
         pathMode: 'relative' as const,
-        engines: ['mergesafe'] as const,
+        engines: [...MERGESAFE_ONLY_ENGINES], // ✅ string[]
       };
 
       const result = await runScan(fixture, config);
@@ -237,7 +240,7 @@ describe('golden scan', () => {
         redact: false,
         autoInstall: false,
         pathMode: 'relative' as const,
-        engines: ['mergesafe'] as const,
+        engines: [...MERGESAFE_ONLY_ENGINES], // ✅ string[]
       };
 
       const runA = await runScan(fixture, config);
@@ -275,7 +278,7 @@ describe('golden scan', () => {
         redact: false,
         autoInstall: false,
         pathMode: 'relative' as const,
-        engines: ['mergesafe'] as const,
+        engines: [...MERGESAFE_ONLY_ENGINES], // ✅ string[]
       };
 
       const outA = mkOutDir();
@@ -314,7 +317,7 @@ describe('golden scan', () => {
         redact: false,
         autoInstall: false,
         pathMode: 'relative',
-        engines: ['mergesafe'],
+        engines: [...MERGESAFE_ONLY_ENGINES], // ✅ string[]
       });
 
       expect(result.summary.bySeverity.high + result.summary.bySeverity.critical).toBeGreaterThan(0);
