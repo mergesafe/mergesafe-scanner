@@ -151,7 +151,13 @@ export interface CiscoConfig {
 
 export interface CliConfig {
   outDir: string;
-  pathMode: 'relative' | 'absolute';
+
+  /**
+   * IMPORTANT: Keep optional for backward-compat with programmatic callers/tests.
+   * CLI must default this to 'relative' when omitted.
+   */
+  pathMode?: 'relative' | 'absolute';
+
   format: string[];
   mode: 'fast' | 'deep';
   timeout: number;
