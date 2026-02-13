@@ -1,23 +1,26 @@
 # MergeSafe Summary
 
-Status: **PASS**
-
-Grade: **F** (score 0)
+Scan: **Completed**
+Policy gate: **DISABLED** (failOn=none; failOn=none (policy gate disabled))
+Risk grade: **F** (score 0)
 
 ## Totals
-- Total findings: 10
-- Critical: 2
-- High: 5
+- Total findings: 17
+- Critical: 3
+- High: 11
 - Medium: 3
 - Low: 0
 - Info: 0
 
 ## Engines
-- mergesafe:ok
+| Engine | Version | Status | Duration (ms) | Notes |
+|---|---|---|---:|---|
+| MergeSafe deterministic rules (mergesafe) | builtin | ok | 36 | Built in - no install required. |
+
 
 ## Top Findings
-- **CRITICAL** Command execution reachable from tool handlers (C:\MergeSafe\mergesafe-scanner\fixtures\node-unsafe-server\server.js:14)
-- **CRITICAL** Dynamic tool registration from untrusted input (C:\MergeSafe\mergesafe-scanner\fixtures\node-unsafe-server\server.js:20)
-- **HIGH** Destructive tools exposed without gating hints (C:\MergeSafe\mergesafe-scanner\fixtures\node-unsafe-server\server.js:8)
-- **HIGH** Filesystem write with user-controlled paths (C:\MergeSafe\mergesafe-scanner\fixtures\node-unsafe-server\server.js:15)
-- **HIGH** Network egress from tool handlers without allowlist (C:\MergeSafe\mergesafe-scanner\fixtures\node-unsafe-server\server.js:16)
+- **CRITICAL** Command execution from user-controlled input (server.js:14) — Found by: MergeSafe deterministic rules
+- **CRITICAL** Dynamic tool registration from untrusted input (server.js:20) — Found by: MergeSafe deterministic rules
+- **CRITICAL** Dangerous tool capability: arbitrary command execution exposed (tools-list.json:4) — Found by: MergeSafe deterministic rules
+- **HIGH** Destructive tools exposed without gating hints (server.js:8) — Found by: MergeSafe deterministic rules
+- **HIGH** Missing auth middleware smell on HTTP MCP endpoints (server.js:12) — Found by: MergeSafe deterministic rules

@@ -268,10 +268,14 @@ function dedupeLocations(locs: FindingLocation[]): FindingLocation[] {
 }
 
 function pickBestEvidence(evidences: FindingEvidence[]): FindingEvidence {
-  // Prefer an excerpt (longest non-empty), otherwise keep first excerptHash.
+  // Deterministic: prefer longest excerpt, break ties lexicographically.
   const withExcerpt = evidences
     .filter((e) => typeof e.excerpt === 'string' && e.excerpt.trim().length > 0)
-    .sort((a, b) => b.excerpt!.trim().length - a.excerpt!.trim().length);
+    .sort((a, b) => {
+      const len = b.excerpt!.trim().length - a.excerpt!.trim().length;
+      if (len !== 0) return len;
+      return a.excerpt!.trim().localeCompare(b.excerpt!.trim());
+    });
 
   if (withExcerpt.length) {
     return {
@@ -280,10 +284,57 @@ function pickBestEvidence(evidences: FindingEvidence[]): FindingEvidence {
     };
   }
 
-  const withHash = evidences.find((e) => typeof e.excerptHash === 'string' && e.excerptHash.trim().length > 0);
-  return withHash
-    ? { excerptHash: withHash.excerptHash, note: 'Merged evidence (hash only)' }
+  const withHash = evidences
+    .filter((e) => typeof e.excerptHash === 'string' && e.excerptHash.trim().length > 0)
+    .sort((a, b) => a.excerptHash!.trim().localeCompare(b.excerptHash!.trim()));
+
+  return withHash.length
+    ? { excerptHash: withHash[0].excerptHash, note: 'Merged evidence (hash only)' }
     : { note: 'Merged evidence unavailable' };
+}
+
+function canonicalSignalForFinding(finding: Finding): string {
+  const tags = [...new Set((finding.tags ?? []).map(normalizeTag).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  return [finding.title, finding.category, finding.owaspMcpTop10, tags.join(',')].map((v) => String(v ?? '')).join('|');
+}
+
+export function canonicalizeFindingIds(findings: Finding[]): Finding[] {
+  return findings.map((finding) => {
+    const locations = (finding.locations ?? []).map((loc) => ({
+      ...loc,
+      filePath: normalizePathForKey(loc.filePath),
+    }));
+
+    const primary = locations[0] ?? { filePath: '.', line: 1 };
+    const fingerprint = findingFingerprint(primary.filePath, Number(primary.line ?? 1), canonicalSignalForFinding(finding));
+
+    return {
+      ...finding,
+      locations,
+      fingerprint,
+      findingId: `ms-${fingerprint}`,
+    };
+  });
+}
+
+export function sortFindingsDeterministically(findings: Finding[]): Finding[] {
+  return [...findings].sort((a, b) => {
+    const sev = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity];
+    if (sev !== 0) return sev;
+
+    const aLoc = a.locations?.[0];
+    const bLoc = b.locations?.[0];
+    const fp = String(aLoc?.filePath ?? '').localeCompare(String(bLoc?.filePath ?? ''));
+    if (fp !== 0) return fp;
+
+    const ln = Number(aLoc?.line ?? 0) - Number(bLoc?.line ?? 0);
+    if (ln !== 0) return ln;
+
+    const id = String(a.findingId ?? '').localeCompare(String(b.findingId ?? ''));
+    if (id !== 0) return id;
+
+    return String(a.title ?? '').localeCompare(String(b.title ?? ''));
+  });
 }
 
 /**
@@ -538,20 +589,7 @@ export function mergeCanonicalFindings(findings: Finding[]): Finding[] {
     merged.push(mergedFinding);
   }
 
-  return merged.sort((a, b) => {
-    const sev = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity];
-    if (sev !== 0) return sev;
-
-    const aLoc = a.locations?.[0];
-    const bLoc = b.locations?.[0];
-    const fp = String(aLoc?.filePath ?? '').localeCompare(String(bLoc?.filePath ?? ''));
-    if (fp !== 0) return fp;
-
-    const ln = Number(aLoc?.line ?? 0) - Number(bLoc?.line ?? 0);
-    if (ln !== 0) return ln;
-
-    return String(a.title ?? '').localeCompare(String(b.title ?? ''));
-  });
+  return sortFindingsDeterministically(merged);
 }
 
 export function shouldFail(bySeverity: Record<Severity, number>, failOn: CliConfig['failOn']): boolean {

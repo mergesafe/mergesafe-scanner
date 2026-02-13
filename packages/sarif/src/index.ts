@@ -83,7 +83,16 @@ function normalizeLocations(result: SarifResult): SarifResult['locations'] {
     };
   });
 
-  return normalized.length > 0 ? normalized : fallback;
+  if (normalized.length === 0) return fallback;
+  return normalized.sort((a, b) => {
+    const au = String(a.physicalLocation.artifactLocation.uri ?? '').localeCompare(
+      String(b.physicalLocation.artifactLocation.uri ?? '')
+    );
+    if (au !== 0) return au;
+    const al = Number(a.physicalLocation.region?.startLine ?? 0) - Number(b.physicalLocation.region?.startLine ?? 0);
+    if (al !== 0) return al;
+    return Number(a.physicalLocation.region?.startColumn ?? 0) - Number(b.physicalLocation.region?.startColumn ?? 0);
+  });
 }
 
 function dedupeRules(rules: SarifRule[] | undefined): SarifRule[] | undefined {
@@ -94,7 +103,7 @@ function dedupeRules(rules: SarifRule[] | undefined): SarifRule[] | undefined {
     if (!r?.id) continue;
     if (!byId.has(r.id)) byId.set(r.id, r);
   }
-  return Array.from(byId.values());
+  return Array.from(byId.values()).sort((a, b) => String(a.id).localeCompare(String(b.id)));
 }
 
 function normalizeRun(run: SarifRun): SarifRun {
@@ -288,7 +297,21 @@ function mergedFindingsRun(args: {
     }
   }
 
-  const rules = Array.from(ruleMap.values());
+  const rules = Array.from(ruleMap.values()).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+
+  const findingsResults = findings
+    .map((f) => findingToSarifResultMerged(f, redact))
+    .sort((a, b) => {
+      const rid = String(a.ruleId).localeCompare(String(b.ruleId));
+      if (rid !== 0) return rid;
+      const aloc = a.locations?.[0]?.physicalLocation;
+      const bloc = b.locations?.[0]?.physicalLocation;
+      const uri = String(aloc?.artifactLocation.uri ?? '').localeCompare(String(bloc?.artifactLocation.uri ?? ''));
+      if (uri !== 0) return uri;
+      const line = Number(aloc?.region?.startLine ?? 0) - Number(bloc?.region?.startLine ?? 0);
+      if (line !== 0) return line;
+      return Number(aloc?.region?.startColumn ?? 0) - Number(bloc?.region?.startColumn ?? 0);
+    });
 
   return normalizeRun({
     tool: {
@@ -298,10 +321,7 @@ function mergedFindingsRun(args: {
         rules,
       },
     },
-    results: [
-      ...notes.results,
-      ...findings.map((f) => findingToSarifResultMerged(f, redact)),
-    ],
+    results: [...notes.results, ...findingsResults],
   });
 }
 

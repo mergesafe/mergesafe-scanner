@@ -22,6 +22,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = path.resolve(here, '../../../fixtures/node-unsafe-server');
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mergesafe-test-golden-'));
 const repoRoot = path.resolve(here, '../../..');
+const goldenDir = path.resolve(here, '../mergesafe-test');
 
 type CliResult = {
   status: number | null;
@@ -100,6 +101,56 @@ describe('golden scan', () => {
     expect(md).toContain('Scan: **Completed**');
     expect(md).toContain('Risk grade:');
     expect(md).toContain('Top Findings');
+  });
+
+  test('outputs are deterministic and match goldens except timestamp', async () => {
+    const run1 = fs.mkdtempSync(path.join(os.tmpdir(), 'mergesafe-run1-'));
+    const run2 = fs.mkdtempSync(path.join(os.tmpdir(), 'mergesafe-run2-'));
+
+    const cfg = {
+      outDir: run1,
+      format: ['json', 'sarif', 'md', 'html'] as const,
+      mode: 'fast' as const,
+      timeout: 30,
+      concurrency: 4,
+      failOn: 'none' as const,
+      redact: false,
+      autoInstall: false,
+      pathMode: 'relative' as const,
+      engines: ['mergesafe'],
+    };
+
+    const result1 = await runScan(fixture, cfg);
+    writeOutputs(result1, cfg);
+
+    const result2 = await runScan(fixture, { ...cfg, outDir: run2 });
+    writeOutputs(result2, { ...cfg, outDir: run2 });
+
+    const json1 = JSON.parse(fs.readFileSync(path.join(run1, 'report.json'), 'utf8'));
+    const json2 = JSON.parse(fs.readFileSync(path.join(run2, 'report.json'), 'utf8'));
+    delete json1.meta.generatedAt;
+    delete json2.meta.generatedAt;
+    json1.meta.engines = (json1.meta.engines ?? []).map((e: any) => ({ ...e, durationMs: 0 }));
+    json2.meta.engines = (json2.meta.engines ?? []).map((e: any) => ({ ...e, durationMs: 0 }));
+
+    expect(json1).toEqual(json2);
+    expect(json1.meta.scannedPath).toBe('.');
+
+    const serializedJson = `${JSON.stringify(json1, null, 2)}\n`;
+    const goldenJson = fs.readFileSync(path.join(goldenDir, 'report.json'), 'utf8');
+    const goldenJsonObj = JSON.parse(goldenJson);
+    delete goldenJsonObj.meta.generatedAt;
+    goldenJsonObj.meta.engines = (goldenJsonObj.meta.engines ?? []).map((e: any) => ({ ...e, durationMs: 0 }));
+    expect(serializedJson).toBe(`${JSON.stringify(goldenJsonObj, null, 2)}\n`);
+
+    const sarif1 = fs.readFileSync(path.join(run1, 'results.sarif'), 'utf8');
+    const sarif2 = fs.readFileSync(path.join(run2, 'results.sarif'), 'utf8');
+    expect(sarif1).toBe(sarif2);
+
+    const goldenSarif = fs.readFileSync(path.join(goldenDir, 'results.sarif'), 'utf8');
+    expect(sarif1).toBe(goldenSarif);
+    expect(sarif1.includes('\\\\')).toBe(false);
+    expect(sarif1.includes('C:/')).toBe(false);
   });
 
   test('fail-on high returns fail status', async () => {

@@ -3,7 +3,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import YAML from 'yaml';
-import { DEFAULT_ENGINES, summarize, type CliConfig, type ScanResult } from '@mergesafe/core';
+import {
+  DEFAULT_ENGINES,
+  canonicalizeFindingIds,
+  sortFindingsDeterministically,
+  summarize,
+  type CliConfig,
+  type Finding,
+  type ScanResult,
+} from '@mergesafe/core';
 import { runEngines, defaultAdapters, listEngines } from '@mergesafe/engines';
 import { generateHtmlReport, generateSummaryMarkdown } from '@mergesafe/report';
 import { mergeSarifRuns } from '@mergesafe/sarif';
@@ -35,6 +43,7 @@ type CiscoCliConfig = {
 };
 
 export type CliConfigExt = CliConfig & {
+  pathMode?: 'relative' | 'absolute';
   cisco?: CiscoCliConfig;
 };
 
@@ -113,6 +122,7 @@ export function getHelpText(target: ParsedArgs['helpTarget'] = 'general'): strin
     '  --auto-install <true|false>    Auto-install missing tools (default: true)',
     '  --no-auto-install              Disable tool auto-install',
     '  --redact                       Redact sensitive fields in output',
+    '  --path-mode <relative|absolute> Output path mode (default: relative)',
     '  --no-cisco                     Remove Cisco engine from selected engines',
   ].join('\n');
 
@@ -362,20 +372,42 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfigExt {
           true
         ),
     engines,
+    pathMode: ((opts['path-mode'] as 'relative' | 'absolute' | undefined) ?? 'relative') === 'absolute' ? 'absolute' : 'relative',
 
     // Extra config consumed by adapters (Step 3)
     cisco: ciscoConfig,
   };
 }
 
+function normalizeOutputPath(filePath: string, scanPath: string, mode: 'relative' | 'absolute'): string {
+  const abs = path.resolve(scanPath, filePath);
+  if (mode === 'absolute') return abs.replace(/\\/g, '/');
+  return path.relative(scanPath, abs).replace(/\\/g, '/');
+}
+
+function normalizeFindingsPaths(findings: Finding[], scanPath: string, mode: 'relative' | 'absolute'): Finding[] {
+  return findings.map((finding) => ({
+    ...finding,
+    locations: (finding.locations ?? []).map((loc) => ({
+      ...loc,
+      filePath: normalizeOutputPath(loc.filePath, scanPath, mode),
+    })),
+  }));
+}
+
 export async function runScan(scanPath: string, config: CliConfigExt, adapters = defaultAdapters): Promise<ScanResult> {
+  const pathMode = config.pathMode ?? 'relative';
   const selected = config.engines ?? [...DEFAULT_ENGINES];
   const { findings, meta } = await runEngines({ scanPath, config }, selected, adapters);
-  const summary = summarize(findings, config.failOn);
+
+  const normalizedPaths = normalizeFindingsPaths(findings, scanPath, pathMode);
+  const canonicalized = canonicalizeFindingIds(normalizedPaths);
+  const deterministicFindings = sortFindingsDeterministically(canonicalized);
+  const summary = summarize(deterministicFindings, config.failOn);
 
   return {
     meta: {
-      scannedPath: scanPath,
+      scannedPath: pathMode === 'absolute' ? path.resolve(scanPath).replace(/\\/g, '/') : '.',
       generatedAt: new Date().toISOString(),
       mode: config.mode,
       timeout: config.timeout,
@@ -384,11 +416,11 @@ export async function runScan(scanPath: string, config: CliConfigExt, adapters =
       engines: meta,
     },
     summary,
-    findings,
+    findings: deterministicFindings,
     byEngine: Object.fromEntries(
       meta.map((entry) => [
         entry.engineId,
-        findings.filter((finding) => finding.engineSources.some((source) => source.engineId === entry.engineId)).length,
+        deterministicFindings.filter((finding) => finding.engineSources.some((source) => source.engineId === entry.engineId)).length,
       ])
     ),
   };
