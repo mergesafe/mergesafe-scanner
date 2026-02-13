@@ -5,8 +5,33 @@ import type { Finding, ScanResult } from '@mergesafe/core';
 const severityRank: Record<Finding['severity'], number> = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
 const confidenceRank: Record<Finding['confidence'], number> = { high: 3, medium: 2, low: 1 };
 
+/**
+ * PR4 determinism helpers (display-layer only)
+ * - Always render with POSIX separators in MD/HTML
+ * - Avoid machine-specific absolute paths leaking via engine notes/errors
+ */
+function toPosixPath(p: string): string {
+  return String(p ?? '').replaceAll('\\', '/');
+}
+
+function scrubMachinePaths(text: string): string {
+  let s = String(text ?? '');
+
+  // Normalize separators first (so patterns are simpler)
+  s = s.replaceAll('\\', '/');
+
+  // Replace Windows absolute paths like C:/Users/... or D:/a/b/...
+  // Keep it conservative: only replace when it clearly looks like a local path.
+  s = s.replace(/\b[A-Za-z]:\/[^\s"')]+/g, '<path>');
+
+  // Replace common Unix absolute paths like /home/runner/... /Users/... /tmp/...
+  s = s.replace(/\b\/(home|Users|private|var|tmp|opt|etc)\/[^\s"')]+/g, '<path>');
+
+  return s;
+}
+
 function escapeHtml(value: string): string {
-  return value
+  return String(value ?? '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
@@ -14,31 +39,38 @@ function escapeHtml(value: string): string {
     .replaceAll("'", '&#39;');
 }
 
+/**
+ * PR4: Do NOT resort findings in report layer.
+ * Assume CLI already applied canonical stable ordering.
+ */
 function topFindings(result: ScanResult): Finding[] {
-  return [...result.findings]
-    .sort(
-      (a, b) =>
-        severityRank[b.severity] - severityRank[a.severity] ||
-        confidenceRank[b.confidence] - confidenceRank[a.confidence]
-    )
-    .slice(0, 5);
+  return (result.findings ?? []).slice(0, 5);
+}
+
+function displayLocation(f: Finding): string {
+  const loc = f.locations?.[0];
+  if (!loc) return '-';
+  const fp = toPosixPath(loc.filePath);
+  const line = loc.line ?? '-';
+  return `${fp}:${line}`;
 }
 
 function artifactHref(artifactPath?: string): string | undefined {
   if (!artifactPath) return undefined;
 
-  // Prefer a relative link rooted at the outDir (report.html lives in outDir)
+  // Prefer a relative link rooted at the outDir (report.html lives in outDir).
   // We strip everything before "/artifacts/" so links work on Windows/macOS/Linux.
-  const norm = artifactPath.replaceAll('\\', '/');
+  const norm = toPosixPath(artifactPath);
   const idx = norm.lastIndexOf('/artifacts/');
   if (idx >= 0) return norm.slice(idx + 1); // "artifacts/..."
   // Already relative (best effort)
-  if (!path.isAbsolute(artifactPath)) return artifactPath.replaceAll('\\', '/');
+  if (!path.isAbsolute(artifactPath)) return norm;
   return undefined;
 }
 
 function engineNoteMarkdown(entry: NonNullable<ScanResult['meta']['engines']>[number]): string {
-  const base = entry.errorMessage ?? entry.installHint ?? '-';
+  const baseRaw = entry.errorMessage ?? entry.installHint ?? '-';
+  const base = scrubMachinePaths(baseRaw);
 
   if (entry.engineId !== 'cisco') return base;
 
@@ -59,7 +91,8 @@ function engineNoteMarkdown(entry: NonNullable<ScanResult['meta']['engines']>[nu
 }
 
 function engineNoteHtml(entry: NonNullable<ScanResult['meta']['engines']>[number]): string {
-  const base = entry.errorMessage ?? entry.installHint ?? '-';
+  const baseRaw = entry.errorMessage ?? entry.installHint ?? '-';
+  const base = scrubMachinePaths(baseRaw);
 
   if (entry.engineId !== 'cisco') return escapeHtml(base);
 
@@ -86,8 +119,8 @@ function engineLabelMap(result: ScanResult): Record<string, string> {
 }
 
 function uniqueEngineIds(f: Finding): string[] {
-  return [...new Set((f.engineSources ?? []).map((s) => String(s.engineId ?? '').trim()).filter(Boolean))].sort(
-    (a, b) => a.localeCompare(b)
+  return [...new Set((f.engineSources ?? []).map((s) => String(s.engineId ?? '').trim()).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b)
   );
 }
 
@@ -129,7 +162,7 @@ function formatPolicyGate(result: ScanResult): { label: string; detail?: string 
 
   const failOn = String(gate.failOn ?? '').toLowerCase();
   const rawStatus = String(gate.status ?? '').toUpperCase(); // PASS/FAIL (today)
-  const reason = gate.reason ? String(gate.reason) : '';
+  const reason = gate.reason ? scrubMachinePaths(String(gate.reason)) : '';
 
   // If failOn is none, treat gate as disabled regardless of status
   if (failOn === 'none') {
@@ -189,8 +222,18 @@ function htmlHeaderBadges(result: ScanResult): string {
   `;
 }
 
-export function generateSummaryMarkdown(result: ScanResult): string {
+function sortedEngines(result: ScanResult): NonNullable<ScanResult['meta']['engines']> {
   const engines = result.meta.engines ?? [];
+  // Deterministic ordering independent of runtime/concurrency.
+  return engines.slice().sort((a, b) => {
+    const id = String(a.engineId).localeCompare(String(b.engineId));
+    if (id !== 0) return id;
+    return String(a.displayName).localeCompare(String(b.displayName));
+  });
+}
+
+export function generateSummaryMarkdown(result: ScanResult): string {
+  const engines = sortedEngines(result);
 
   const engineRows = engines
     .map(
@@ -208,9 +251,8 @@ export function generateSummaryMarkdown(result: ScanResult): string {
       const ids = uniqueEngineIds(f);
       const attribution = ids.map((id) => label[id] ?? id).join(', ');
       const confirmed = ids.length > 1 ? ' ✅ Multi-engine confirmed' : '';
-      const loc = f.locations?.[0];
-      const where = loc ? `${loc.filePath}:${loc.line}` : '-';
-      return `- **${f.severity.toUpperCase()}** ${f.title} (${where}) — Found by: ${attribution}${confirmed}`;
+      const where = displayLocation(f);
+      return `- **${String(f.severity).toUpperCase()}** ${f.title} (${where}) — Found by: ${attribution}${confirmed}`;
     })
     .join('\n');
 
@@ -250,7 +292,7 @@ ${top || '- None'}
 }
 
 export function generateHtmlReport(result: ScanResult): string {
-  const engines = result.meta.engines ?? [];
+  const engines = sortedEngines(result);
   const label = engineLabelMap(result);
 
   const engineRows = engines
@@ -278,7 +320,8 @@ export function generateHtmlReport(result: ScanResult): string {
     })
     .join('');
 
-  const rows = result.findings
+  // PR4: preserve input order (assumed stable) — do not resort.
+  const rows = (result.findings ?? [])
     .map((f, i) => {
       const ids = uniqueEngineIds(f);
       const names = ids.map((id) => label[id] ?? id);
@@ -294,7 +337,15 @@ export function generateHtmlReport(result: ScanResult): string {
 
       const engineDetail = (f.engineSources ?? [])
         .slice()
-        .sort((a, b) => String(a.engineId).localeCompare(String(b.engineId)))
+        .sort((a, b) => {
+          const e = String(a.engineId).localeCompare(String(b.engineId));
+          if (e !== 0) return e;
+          const r = String(a.engineRuleId ?? '').localeCompare(String(b.engineRuleId ?? ''));
+          if (r !== 0) return r;
+          const s = String(a.engineSeverity ?? '').localeCompare(String(b.engineSeverity ?? ''));
+          if (s !== 0) return s;
+          return String(a.message ?? '').localeCompare(String(b.message ?? ''));
+        })
         .map(
           (source) =>
             `<li><strong>${escapeHtml(label[source.engineId] ?? source.engineId)}</strong> (<code>${escapeHtml(
@@ -304,7 +355,9 @@ export function generateHtmlReport(result: ScanResult): string {
         .join('');
 
       const loc = f.locations?.[0];
-      const where = loc ? `${escapeHtml(loc.filePath)}:${loc.line ?? '-'}` : '-';
+      const where = loc ? `${escapeHtml(toPosixPath(loc.filePath))}:${loc.line ?? '-'}` : '-';
+
+      const evidenceText = scrubMachinePaths(f.evidence?.excerpt ?? f.evidence?.excerptHash ?? '');
 
       return `<tr>
         <td>${i + 1}</td>
@@ -319,7 +372,7 @@ export function generateHtmlReport(result: ScanResult): string {
           <details>
             <summary>Details</summary>
             <p>${escapeHtml(f.remediation)}</p>
-            <pre>${escapeHtml(f.evidence.excerpt ?? f.evidence.excerptHash ?? '')}</pre>
+            <pre>${escapeHtml(evidenceText)}</pre>
             <p>Engine matrix:</p>
             <ul>${engineDetail || '<li>-</li>'}</ul>
           </details>

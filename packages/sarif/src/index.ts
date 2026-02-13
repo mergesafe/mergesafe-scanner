@@ -1,3 +1,4 @@
+// packages/sarif/src/index.ts
 import fs from 'node:fs';
 import path from 'node:path';
 import type { EngineExecutionMeta, Finding, ScanResult } from '@mergesafe/core';
@@ -21,7 +22,7 @@ interface SarifResult {
     };
   }>;
   fingerprints?: Record<string, string>;
-  // ✅ Step 5: keep merge context in SARIF so GitHub Code Scanning retains it
+  // keep MergeSafe merge context in SARIF so GitHub Code Scanning retains it
   properties?: Record<string, any>;
 }
 
@@ -50,27 +51,52 @@ function toSarifLevel(severity: string): SarifLevel {
       : 'note';
 }
 
-// Keep URIs stable across Windows/macOS/Linux
+// POSIX separators + light normalization for stable SARIF URIs
 function toSarifUri(filePath: string | undefined): string {
-  if (!filePath || !filePath.trim()) return '.';
-  return filePath.replace(/\\/g, '/');
+  const raw = String(filePath ?? '').trim();
+  if (!raw) return '.';
+
+  // normalize slashes
+  let uri = raw.replace(/\\/g, '/');
+
+  // collapse duplicate slashes (but preserve leading // if it ever occurs)
+  uri = uri.replace(/([^:])\/{2,}/g, '$1/');
+
+  // drop leading "./" for canonical display
+  uri = uri.replace(/^\.\//, '');
+
+  return uri || '.';
 }
 
+// Remove machine-specific path fragments from messages (keeps SARIF stable & portable)
+function scrubMachinePaths(text: string): string {
+  let s = String(text ?? '');
+  s = s.replaceAll('\\', '/');
+
+  // Windows absolute paths (C:/Users/..., D:/a/b, etc.)
+  s = s.replace(/\b[A-Za-z]:\/[^\s"')]+/g, '<path>');
+
+  // Common Unix absolute paths (/home/runner/..., /Users/..., /tmp/..., etc.)
+  s = s.replace(/\b\/(home|Users|private|var|tmp|opt|etc)\/[^\s"')]+/g, '<path>');
+
+  return s;
+}
 
 function normalizeLocations(result: SarifResult): SarifResult['locations'] {
-  const fallback = [{
-    physicalLocation: {
-      artifactLocation: { uri: '.' },
-      region: { startLine: 1, startColumn: 1 },
+  const fallback = [
+    {
+      physicalLocation: {
+        artifactLocation: { uri: '.' },
+        region: { startLine: 1, startColumn: 1 },
+      },
     },
-  }];
+  ];
 
   if (!result.locations || result.locations.length === 0) return fallback;
 
   const normalized = result.locations.map((location) => {
-    const uri = location.physicalLocation?.artifactLocation?.uri?.trim()
-      ? location.physicalLocation.artifactLocation.uri
-      : '.';
+    const uriRaw = location.physicalLocation?.artifactLocation?.uri;
+    const uri = toSarifUri(uriRaw);
 
     const startLine = Math.max(1, location.physicalLocation?.region?.startLine ?? 1);
     const startColumn = Math.max(1, location.physicalLocation?.region?.startColumn ?? 1);
@@ -86,15 +112,17 @@ function normalizeLocations(result: SarifResult): SarifResult['locations'] {
   return normalized.length > 0 ? normalized : fallback;
 }
 
-function dedupeRules(rules: SarifRule[] | undefined): SarifRule[] | undefined {
+function dedupeAndSortRules(rules: SarifRule[] | undefined): SarifRule[] | undefined {
   if (!rules || rules.length === 0) return rules;
 
   const byId = new Map<string, SarifRule>();
   for (const r of rules) {
-    if (!r?.id) continue;
-    if (!byId.has(r.id)) byId.set(r.id, r);
+    const id = String(r?.id ?? '').trim();
+    if (!id) continue;
+    if (!byId.has(id)) byId.set(id, { ...r, id });
   }
-  return Array.from(byId.values());
+
+  return Array.from(byId.values()).sort((a, b) => String(a.id).localeCompare(String(b.id)));
 }
 
 function normalizeRun(run: SarifRun): SarifRun {
@@ -107,9 +135,27 @@ function normalizeRun(run: SarifRun): SarifRun {
       ...run.tool,
       driver: {
         ...driver,
-        rules: dedupeRules(driver.rules),
+        rules: dedupeAndSortRules(driver.rules),
       },
     },
+    // results order is intentionally preserved (notes first, then findings in input order)
+    results: (run.results ?? []).map((r) => {
+      const out: SarifResult = { ...r };
+      out.locations = normalizeLocations(out);
+      // normalize location URIs even if caller forgot
+      if (out.locations) {
+        out.locations = out.locations.map((loc) => ({
+          physicalLocation: {
+            artifactLocation: { uri: toSarifUri(loc.physicalLocation?.artifactLocation?.uri) },
+            region: {
+              startLine: Math.max(1, loc.physicalLocation?.region?.startLine ?? 1),
+              startColumn: Math.max(1, loc.physicalLocation?.region?.startColumn ?? 1),
+            },
+          },
+        }));
+      }
+      return out;
+    }),
   };
 }
 
@@ -129,8 +175,8 @@ function stableEngineSources(finding: Finding): Array<{
     }))
     .filter((s) => Boolean(s.engineId))
     .sort((a, b) => {
-      const aKey = `${a.engineId}:${a.engineRuleId ?? ''}:${a.engineSeverity ?? ''}`;
-      const bKey = `${b.engineId}:${b.engineRuleId ?? ''}:${b.engineSeverity ?? ''}`;
+      const aKey = `${a.engineId}:${a.engineRuleId ?? ''}:${a.engineSeverity ?? ''}:${a.message ?? ''}`;
+      const bKey = `${b.engineId}:${b.engineRuleId ?? ''}:${b.engineSeverity ?? ''}:${b.message ?? ''}`;
       return aKey.localeCompare(bKey);
     });
 }
@@ -139,7 +185,7 @@ function stableEngineIds(finding: Finding): string[] {
   return [...new Set(stableEngineSources(finding).map((s) => s.engineId))].sort((a, b) => a.localeCompare(b));
 }
 
-// ✅ Stable rule id for merged findings (avoids churn based on which engine created findingId first)
+// Stable rule id for merged findings (avoids churn based on which engine created findingId first)
 function sarifRuleIdForFinding(finding: Finding): string {
   return `mergesafe.finding.${finding.fingerprint}`;
 }
@@ -151,9 +197,11 @@ function findingToSarifResultMerged(finding: Finding, redact: boolean): SarifRes
 
   const foundBy = engineIds.length ? engineIds.join(', ') : 'unknown';
 
-  const safeMessage = redact
+  const safeMessageRaw = redact
     ? `${finding.title} — Found by: ${foundBy}${multi ? ' (multi-engine confirmed)' : ''}`
     : `${finding.title} — Found by: ${foundBy}${multi ? ' (multi-engine confirmed)' : ''} — ${finding.remediation}`;
+
+  const safeMessage = scrubMachinePaths(safeMessageRaw);
 
   const sources = stableEngineSources(finding);
   const tags = Array.isArray(finding.tags)
@@ -182,6 +230,8 @@ function findingToSarifResultMerged(finding: Finding, redact: boolean): SarifRes
       ? [
           {
             physicalLocation: {
+              // PR4: URIs should be repo-relative by default (CLI should provide relative paths).
+              // We still normalize slashes here to be OS-stable.
               artifactLocation: { uri: toSarifUri(location.filePath) },
               region: { startLine: Math.max(1, location.line ?? 1), startColumn: Math.max(1, location.column ?? 1) },
             },
@@ -200,7 +250,7 @@ function makeNoteResult(ruleId: string, text: string): SarifResult {
   const result: SarifResult = {
     ruleId,
     level: 'note',
-    message: { text },
+    message: { text: scrubMachinePaths(text) },
   };
   result.locations = normalizeLocations(result);
   return result;
@@ -237,7 +287,7 @@ function engineStatusNotes(enginesMeta: EngineExecutionMeta[] | undefined): { ru
       )
     );
   } else if (cisco.status === 'failed' || cisco.status === 'timeout') {
-    const detail = cisco.errorMessage ? ` Details: ${cisco.errorMessage}` : '';
+    const detail = cisco.errorMessage ? ` Details: ${scrubMachinePaths(cisco.errorMessage)}` : '';
     results.push(
       makeNoteResult(
         ruleId,
@@ -261,6 +311,7 @@ function mergedFindingsRun(args: {
   // Rules: one per merged finding (stable id), plus note rule(s)
   const ruleMap = new Map<string, SarifRule>();
 
+  // Preserve insertion order while building, but we will sort by id before output.
   for (const f of findings) {
     const id = sarifRuleIdForFinding(f);
     if (!ruleMap.has(id)) {
@@ -288,7 +339,16 @@ function mergedFindingsRun(args: {
     }
   }
 
-  const rules = Array.from(ruleMap.values());
+  // PR4: stable rule ordering
+  const rules = Array.from(ruleMap.values()).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+
+  // PR4: stable results ordering:
+  // - notes first (deterministic)
+  // - then findings in input order (CLI should already stable-sort findings)
+  const results: SarifResult[] = [
+    ...notes.results,
+    ...findings.map((f) => findingToSarifResultMerged(f, redact)),
+  ];
 
   return normalizeRun({
     tool: {
@@ -298,10 +358,7 @@ function mergedFindingsRun(args: {
         rules,
       },
     },
-    results: [
-      ...notes.results,
-      ...findings.map((f) => findingToSarifResultMerged(f, redact)),
-    ],
+    results,
   });
 }
 
@@ -313,7 +370,7 @@ export function mergeSarifRuns(args: {
 }): SarifLog {
   const { outDir, enginesMeta, canonicalFindings, redact } = args;
 
-  // ✅ IMPORTANT: Output a single merged SARIF run so GitHub shows merged results, not duplicates per engine.
+  // Output a single merged SARIF run so GitHub shows merged results, not duplicates per engine.
   const runs: SarifRun[] = [
     mergedFindingsRun({
       findings: canonicalFindings,

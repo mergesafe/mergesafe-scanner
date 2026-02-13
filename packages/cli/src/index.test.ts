@@ -1,5 +1,4 @@
 // packages/cli/src/index.test.ts
-
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -20,7 +19,13 @@ import { DEFAULT_ENGINES } from '@mergesafe/core';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../../..');
-const fixture = path.resolve(repoRoot, 'fixtures/node-unsafe-server');
+
+const fixtureAbs = path.resolve(repoRoot, 'fixtures/node-unsafe-server');
+const fixtureRel = 'fixtures/node-unsafe-server';
+
+const goldensDir = path.resolve(repoRoot, 'packages/cli/test/goldens/node-unsafe-server');
+const goldenReportPath = path.join(goldensDir, 'report.json');
+const goldenSarifPath = path.join(goldensDir, 'results.sarif');
 
 type CliResult = {
   status: number | null;
@@ -30,8 +35,7 @@ type CliResult = {
   signal: NodeJS.Signals | null;
 };
 
-const mkTempOutDir = (prefix: string) =>
-  fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-${Date.now()}-`));
+const mkTempOutDir = (prefix: string) => fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-${Date.now()}-`));
 
 const rmTempOutDir = (dir: string) => {
   try {
@@ -41,9 +45,144 @@ const rmTempOutDir = (dir: string) => {
   }
 };
 
+function normalizeText(input: string): string {
+  return String(input ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trimEnd();
+}
+
+function readTextNormalized(filePath: string): string {
+  return normalizeText(fs.readFileSync(filePath, 'utf8'));
+}
+
+function requireGolden(filePath: string) {
+  if (fs.existsSync(filePath)) return;
+  const rel = path.relative(repoRoot, filePath).replace(/\\/g, '/');
+
+  throw new Error(
+    [
+      `Missing golden file: ${rel}`,
+      '',
+      'Generate/update goldens by running (from repo root):',
+      `  pnpm -C packages/cli dev -- scan ${fixtureRel} --fail-on none --path-mode relative --format json,sarif --engines mergesafe --no-auto-install --out-dir test/goldens/node-unsafe-server`,
+      '',
+      'This should create:',
+      `  ${path.relative(repoRoot, goldenReportPath).replace(/\\/g, '/')}`,
+      `  ${path.relative(repoRoot, goldenSarifPath).replace(/\\/g, '/')}`,
+    ].join('\n')
+  );
+}
+
+/**
+ * Collect all string values from a JSON object (deep).
+ */
+function collectStringsDeep(value: unknown, out: string[] = []): string[] {
+  if (typeof value === 'string') {
+    out.push(value);
+    return out;
+  }
+  if (Array.isArray(value)) {
+    for (const v of value) collectStringsDeep(v, out);
+    return out;
+  }
+  if (value && typeof value === 'object') {
+    for (const v of Object.values(value as Record<string, unknown>)) collectStringsDeep(v, out);
+  }
+  return out;
+}
+
+function containsAbsoluteMachinePathInString(s: string): boolean {
+  const t = String(s ?? '');
+
+  // Windows drive paths:
+  if (/[A-Za-z]:\\/.test(t)) return true;
+  if (/[A-Za-z]:\/(?!\/)/.test(t)) return true;
+
+  // UNC paths: \\server\share\...
+  if (/\\\\[A-Za-z0-9_.-]+\\/.test(t)) return true;
+
+  // file:// URIs containing machine paths
+  if (/file:\/\/\/[A-Za-z]:\/(?!\/)/i.test(t)) return true;
+  if (/file:\/\/\/(Users|home|var|tmp|private|Volumes|opt)\//i.test(t)) return true;
+
+  // Unix-ish absolute paths that strongly indicate machine-specific leakage
+  if (/(^|[^a-zA-Z0-9+.-])\/(Users|home|var|tmp|private|Volumes|opt)\//.test(t)) return true;
+
+  // Common CI runner home paths
+  if (/\/home\/runner\//.test(t)) return true;
+  if (/\/Users\/runner\//.test(t)) return true;
+  if (/C:\\Users\\runner\\/.test(t)) return true;
+
+  return false;
+}
+
+/**
+ * Assert outputs do not contain machine-specific absolute paths.
+ * Parses JSON when possible and scans all string values.
+ */
+function assertNoAbsoluteMachinePaths(text: string) {
+  const raw = String(text ?? '');
+
+  try {
+    const parsed = JSON.parse(raw);
+    const strings = collectStringsDeep(parsed);
+
+    const bad = strings.find((s) => containsAbsoluteMachinePathInString(s));
+    if (bad) throw new Error(`Found absolute machine path in output string value:\n${bad}`);
+    return;
+  } catch {
+    if (containsAbsoluteMachinePathInString(raw)) {
+      throw new Error('Found absolute machine path in raw output text.');
+    }
+  }
+}
+
+/**
+ * Canonicalize scannedPath so goldens generated from different outDirs compare cleanly.
+ * Example: "../../fixtures/node-unsafe-server" -> "fixtures/node-unsafe-server"
+ */
+function canonicalizeScannedPath(p: unknown): unknown {
+  if (typeof p !== 'string') return p;
+  const posix = p.replace(/\\/g, '/');
+
+  // Prefer trimming to the repo-relative fixture prefix if present
+  const idx = posix.lastIndexOf('fixtures/node-unsafe-server');
+  if (idx >= 0) return posix.slice(idx);
+
+  // Otherwise strip leading ./ and ../ segments (best effort)
+  let s = posix.replace(/^\.\//, '');
+  while (s.startsWith('../')) s = s.slice(3);
+  return s;
+}
+
+function scrubReportJsonForGolden(obj: any): any {
+  const cloned = JSON.parse(JSON.stringify(obj ?? {}));
+
+  if (cloned?.meta) {
+    // normalize scannedPath for stable comparison across different outDirs
+    if (typeof cloned.meta.scannedPath === 'string') {
+      cloned.meta.scannedPath = canonicalizeScannedPath(cloned.meta.scannedPath);
+    }
+
+    // timestamp-like
+    if (typeof cloned.meta.generatedAt === 'string') cloned.meta.generatedAt = '<generatedAt>';
+
+    // durations drift run-to-run
+    if (Array.isArray(cloned.meta.engines)) {
+      for (const e of cloned.meta.engines) {
+        if (typeof e?.durationMs === 'number') e.durationMs = 0;
+      }
+    }
+  }
+
+  return cloned;
+}
+
+function normalizeJsonForGolden(jsonText: string): string {
+  const parsed = JSON.parse(jsonText);
+  const scrubbed = scrubReportJsonForGolden(parsed);
+  return normalizeText(JSON.stringify(scrubbed, null, 2));
+}
+
 const runCli = (args: string[]): CliResult => {
-  // On GitHub Actions (especially Windows), spawning `pnpm` directly can fail and return:
-  // status=null, stdout/stderr=null. Prefer `node $npm_execpath` when available.
   const npmExecPath = process.env.npm_execpath;
   const hasExecPath = Boolean(npmExecPath && fs.existsSync(npmExecPath));
 
@@ -57,11 +196,7 @@ const runCli = (args: string[]): CliResult => {
 
   const res = hasExecPath
     ? spawnSync(process.execPath, [npmExecPath as string, '-C', 'packages/cli', 'dev', '--', ...args], opts)
-    : spawnSync(
-        process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
-        ['-C', 'packages/cli', 'dev', '--', ...args],
-        opts
-      );
+    : spawnSync(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['-C', 'packages/cli', 'dev', '--', ...args], opts);
 
   return {
     status: res.status,
@@ -73,8 +208,72 @@ const runCli = (args: string[]): CliResult => {
 };
 
 beforeAll(() => {
-  // Guardrail: if fixture path breaks, scan might accidentally run on repoRoot and time out.
-  expect(fs.existsSync(fixture)).toBe(true);
+  expect(fs.existsSync(fixtureAbs)).toBe(true);
+});
+
+describe('deterministic outputs goldens', () => {
+  test(
+    'relative mode produces stable report.json + results.sarif and contains no absolute machine paths',
+    async () => {
+      requireGolden(goldenReportPath);
+      requireGolden(goldenSarifPath);
+
+      const outDir = mkTempOutDir('mergesafe-test-deterministic');
+
+      const prevCwd = process.cwd();
+      process.chdir(repoRoot);
+
+      try {
+        const cfg: any = {
+          outDir,
+          format: ['json', 'sarif'],
+          mode: 'fast',
+          timeout: 30,
+
+          // IMPORTANT: match golden default metadata (your goldens show concurrency=4)
+          concurrency: 4,
+
+          engines: ['mergesafe'],
+          autoInstall: false,
+
+          failOn: 'none',
+          redact: false,
+
+          pathMode: 'relative',
+          scanRoot: path.resolve(repoRoot, fixtureRel),
+        };
+
+        const result = await runScan(fixtureRel, cfg);
+        const outputPath = writeOutputs(result, cfg);
+
+        expect(outputPath).toBe(normalizeOutDir(outDir));
+
+        const reportPath = path.join(outDir, 'report.json');
+        const sarifPath = path.join(outDir, 'results.sarif');
+
+        expect(fs.existsSync(reportPath)).toBe(true);
+        expect(fs.existsSync(sarifPath)).toBe(true);
+
+        const reportRaw = readTextNormalized(reportPath);
+        const sarifRaw = readTextNormalized(sarifPath);
+
+        assertNoAbsoluteMachinePaths(reportRaw);
+        assertNoAbsoluteMachinePaths(sarifRaw);
+
+        const actualReport = normalizeJsonForGolden(reportRaw);
+        const goldenReport = normalizeJsonForGolden(readTextNormalized(goldenReportPath));
+        expect(actualReport).toBe(goldenReport);
+
+        const actualSarif = normalizeText(sarifRaw);
+        const goldenSarif = normalizeText(readTextNormalized(goldenSarifPath));
+        expect(actualSarif).toBe(goldenSarif);
+      } finally {
+        process.chdir(prevCwd);
+        rmTempOutDir(outDir);
+      }
+    },
+    60_000
+  );
 });
 
 describe('golden scan', () => {
@@ -83,21 +282,20 @@ describe('golden scan', () => {
     async () => {
       const outDir = mkTempOutDir('mergesafe-test-golden');
       try {
-        const result = await runScan(fixture, {
-          outDir,
-          format: ['json', 'sarif', 'md', 'html'],
-          mode: 'fast',
-          timeout: 30,
-          concurrency: 1,
-
-          // Critical for speed + determinism in tests:
-          // run ONLY deterministic mergesafe engine; do not depend on external binaries.
-          engines: ['mergesafe'],
-          autoInstall: false,
-
-          failOn: 'none',
-          redact: false,
-        });
+        const result = await runScan(
+          fixtureAbs,
+          {
+            outDir,
+            format: ['json', 'sarif', 'md', 'html'],
+            mode: 'fast',
+            timeout: 30,
+            concurrency: 1,
+            engines: ['mergesafe'],
+            autoInstall: false,
+            failOn: 'none',
+            redact: false,
+          } as any
+        );
 
         const outputPath = writeOutputs(result, {
           outDir,
@@ -109,7 +307,7 @@ describe('golden scan', () => {
           autoInstall: false,
           failOn: 'none',
           redact: false,
-        });
+        } as any);
 
         expect(outputPath).toBe(normalizeOutDir(outDir));
         expect(fs.existsSync(path.join(outDir, 'report.json'))).toBe(true);
@@ -139,17 +337,20 @@ describe('golden scan', () => {
     async () => {
       const outDir = mkTempOutDir('mergesafe-test-golden');
       try {
-        const result = await runScan(fixture, {
-          outDir,
-          format: ['json'],
-          mode: 'fast',
-          timeout: 30,
-          concurrency: 1,
-          engines: ['mergesafe'],
-          autoInstall: false,
-          failOn: 'high',
-          redact: false,
-        });
+        const result = await runScan(
+          fixtureAbs,
+          {
+            outDir,
+            format: ['json'],
+            mode: 'fast',
+            timeout: 30,
+            concurrency: 1,
+            engines: ['mergesafe'],
+            autoInstall: false,
+            failOn: 'high',
+            redact: false,
+          } as any
+        );
 
         expect(result.summary.bySeverity.high + result.summary.bySeverity.critical).toBeGreaterThan(0);
         expect(result.summary.status).toBe('FAIL');
@@ -249,7 +450,6 @@ describe('help output', () => {
     expect(result.signal).toBeNull();
     expect(result.status).not.toBe(0);
 
-    // Depending on arg parsing / runtime, usage may land in stdout or stderr.
     const out = result.stderr + result.stdout;
     expect(out).toContain('Usage: mergesafe scan <path> [options]');
   });
@@ -275,7 +475,7 @@ describe('resilience', () => {
       };
 
       const result = await runScan(
-        fixture,
+        fixtureAbs,
         {
           outDir,
           format: ['json', 'sarif', 'md', 'html'],
@@ -286,7 +486,7 @@ describe('resilience', () => {
           redact: false,
           autoInstall: false,
           engines: ['boom'],
-        },
+        } as any,
         [failingAdapter]
       );
 
@@ -300,7 +500,7 @@ describe('resilience', () => {
         redact: false,
         autoInstall: false,
         engines: ['boom'],
-      });
+      } as any);
 
       expect(outputPath).toBe(normalizeOutDir(outDir));
       expect(fs.existsSync(path.join(outDir, 'report.json'))).toBe(true);
