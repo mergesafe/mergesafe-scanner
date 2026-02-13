@@ -71,6 +71,49 @@ function normalizeSarifUri(u: string): string {
   return normalizeEol(u).replace(/\\/g, '/');
 }
 
+function levelRank(level: string): number {
+  // Match SARIF semantics: error > warning > note (for deterministic sort keys)
+  // We rank error lowest so it sorts first (0).
+  if (level === 'error') return 0;
+  if (level === 'warning') return 1;
+  return 2; // note/unknown
+}
+
+function sarifLocationKey(loc: any): string {
+  const pl = loc?.physicalLocation;
+  const uri = normalizeSarifUri(pl?.artifactLocation?.uri ?? '');
+  const r = pl?.region ?? {};
+  const sl = Number(r?.startLine ?? 1);
+  const sc = Number(r?.startColumn ?? 1);
+  const el = Number(r?.endLine ?? 0);
+  const ec = Number(r?.endColumn ?? 0);
+  return `${uri}::${String(sl).padStart(8, '0')}::${String(sc).padStart(8, '0')}::${String(el).padStart(8, '0')}::${String(ec).padStart(8, '0')}`;
+}
+
+function normalizeAndSortSarifLocations(res: any) {
+  if (!Array.isArray(res?.locations)) return;
+
+  for (const loc of res.locations) {
+    const pl = loc?.physicalLocation;
+    if (!pl) continue;
+
+    const uri = pl?.artifactLocation?.uri;
+    if (typeof uri === 'string') {
+      pl.artifactLocation.uri = normalizeSarifUri(uri);
+    }
+
+    // Clamp region values (defensive; keeps keys stable)
+    if (pl?.region) {
+      if (pl.region.startLine != null) pl.region.startLine = Math.max(1, Number(pl.region.startLine));
+      if (pl.region.startColumn != null) pl.region.startColumn = Math.max(1, Number(pl.region.startColumn));
+      if (pl.region.endLine != null) pl.region.endLine = Math.max(1, Number(pl.region.endLine));
+      if (pl.region.endColumn != null) pl.region.endColumn = Math.max(1, Number(pl.region.endColumn));
+    }
+  }
+
+  res.locations.sort((a: any, b: any) => sarifLocationKey(a).localeCompare(sarifLocationKey(b)));
+}
+
 function sortFindingsStable(findings: any[]): any[] {
   const key = (f: any) => {
     const src = f?.engineSources?.[0];
@@ -162,7 +205,7 @@ function sanitizeSarif(sarif: any) {
       });
     }
 
-    // Results: remove rule linkage + fingerprints + normalize URIs + stable sort by location/message
+    // Results: remove rule linkage + fingerprints + normalize URIs + stable sort
     if (Array.isArray(run?.results)) {
       for (const res of run.results) {
         // Rule linkage is where most cross-OS churn happens
@@ -177,21 +220,20 @@ function sanitizeSarif(sarif: any) {
           res.message.text = normalizeEol(res.message.text).trim();
         }
 
-        // Normalize file URIs to forward slashes
-        const loc0 = res?.locations?.[0]?.physicalLocation;
-        const uri = loc0?.artifactLocation?.uri;
-        if (typeof uri === 'string') {
-          loc0.artifactLocation.uri = normalizeSarifUri(uri);
-        }
+        // ✅ NEW: normalize + sort ALL locations deterministically (not just [0])
+        normalizeAndSortSarifLocations(res);
       }
 
       const key = (r: any) => {
         const loc0 = r?.locations?.[0]?.physicalLocation;
         const uri = normalizeSarifUri(loc0?.artifactLocation?.uri ?? '');
         const line = Number(loc0?.region?.startLine ?? 0);
-        const lvl = String(r?.level ?? '');
+
+        // ✅ NEW: stable severity rank, not lexicographic string
+        const lvlRank = levelRank(String(r?.level ?? ''));
+
         const msg = String(r?.message?.text ?? '');
-        return `${uri}::${String(line).padStart(8, '0')}::${lvl}::${msg}`;
+        return `${uri}::${String(line).padStart(8, '0')}::${String(lvlRank).padStart(2, '0')}::${msg}`;
       };
 
       run.results.sort((a: any, b: any) => key(a).localeCompare(key(b)));

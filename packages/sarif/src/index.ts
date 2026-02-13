@@ -17,7 +17,7 @@ interface SarifResult {
   locations?: Array<{
     physicalLocation: {
       artifactLocation: { uri?: string };
-      region?: { startLine?: number; startColumn?: number };
+      region?: { startLine?: number; startColumn?: number; endLine?: number; endColumn?: number };
     };
   }>;
   fingerprints?: Record<string, string>;
@@ -50,39 +50,89 @@ function toSarifLevel(severity: string): SarifLevel {
       : 'note';
 }
 
-// Keep URIs stable across Windows/macOS/Linux
+/**
+ * IMPORTANT: Keep URIs stable across Windows/macOS/Linux.
+ * - Never use path.normalize() for output URIs (it reintroduces '\' on Windows).
+ * - Always output '/' separators in SARIF.
+ */
 function toSarifUri(filePath: string | undefined): string {
   if (!filePath || !filePath.trim()) return '.';
-  return filePath.replace(/\\/g, '/');
+  return filePath.trim().replace(/\\/g, '/');
 }
 
+/** Stable, locale-independent compare helpers */
+function cmpStr(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+function cmpNum(a: number, b: number): number {
+  return a === b ? 0 : a < b ? -1 : 1;
+}
 
-function normalizeLocations(result: SarifResult): SarifResult['locations'] {
-  const fallback = [{
-    physicalLocation: {
-      artifactLocation: { uri: '.' },
-      region: { startLine: 1, startColumn: 1 },
+function levelRank(level: SarifLevel | undefined): number {
+  // Explicit rank (don’t rely on lexicographic order)
+  // error (0) < warning (1) < note (2)
+  if (level === 'error') return 0;
+  if (level === 'warning') return 1;
+  return 2;
+}
+
+type SarifLocation = NonNullable<SarifResult['locations']>[number];
+
+function locationKey(loc: SarifLocation): string {
+  const pl = loc?.physicalLocation;
+  const uri = toSarifUri(pl?.artifactLocation?.uri);
+  const r = pl?.region ?? {};
+  const sl = Number(r.startLine ?? 1);
+  const sc = Number(r.startColumn ?? 1);
+  const el = Number(r.endLine ?? 0);
+  const ec = Number(r.endColumn ?? 0);
+  // Use separators that won’t collide with file names
+  return `${uri}\u0000${sl}\u0000${sc}\u0000${el}\u0000${ec}`;
+}
+
+/**
+ * Normalize + deterministically sort locations.
+ * This fixes your current CI mismatch where the *same* locations appear but in different orders.
+ */
+function normalizeLocations(locations: SarifResult['locations'] | undefined): SarifResult['locations'] {
+  const fallback: SarifLocation[] = [
+    {
+      physicalLocation: {
+        artifactLocation: { uri: '.' },
+        region: { startLine: 1, startColumn: 1 },
+      },
     },
-  }];
+  ];
 
-  if (!result.locations || result.locations.length === 0) return fallback;
+  const locs = Array.isArray(locations) ? locations : [];
+  if (locs.length === 0) return fallback;
 
-  const normalized = result.locations.map((location) => {
-    const uri = location.physicalLocation?.artifactLocation?.uri?.trim()
-      ? location.physicalLocation.artifactLocation.uri
-      : '.';
+  const normalized: SarifLocation[] = locs.map((location) => {
+    const pl = location?.physicalLocation;
 
-    const startLine = Math.max(1, location.physicalLocation?.region?.startLine ?? 1);
-    const startColumn = Math.max(1, location.physicalLocation?.region?.startColumn ?? 1);
+    const uri = toSarifUri(pl?.artifactLocation?.uri);
+    const region = pl?.region ?? {};
+
+    const startLine = Math.max(1, Number(region.startLine ?? 1));
+    const startColumn = Math.max(1, Number(region.startColumn ?? 1));
+    const endLine = region.endLine != null ? Math.max(1, Number(region.endLine)) : undefined;
+    const endColumn = region.endColumn != null ? Math.max(1, Number(region.endColumn)) : undefined;
 
     return {
       physicalLocation: {
-        artifactLocation: { uri },
-        region: { startLine, startColumn },
+        artifactLocation: { uri: uri || '.' },
+        region: {
+          startLine,
+          startColumn,
+          ...(endLine != null ? { endLine } : {}),
+          ...(endColumn != null ? { endColumn } : {}),
+        },
       },
     };
   });
 
+  normalized.sort((a, b) => cmpStr(locationKey(a), locationKey(b)));
   return normalized.length > 0 ? normalized : fallback;
 }
 
@@ -94,24 +144,56 @@ function dedupeRules(rules: SarifRule[] | undefined): SarifRule[] | undefined {
     if (!r?.id) continue;
     if (!byId.has(r.id)) byId.set(r.id, r);
   }
-  return Array.from(byId.values()).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+
+  // Stable rule order
+  return Array.from(byId.values()).sort((a, b) => cmpStr(String(a.id), String(b.id)));
 }
 
+function primaryLocationKey(result: SarifResult): string {
+  const loc = result.locations?.[0];
+  if (!loc) return '.\u00001\u00001\u00000\u00000';
+  return locationKey(loc as SarifLocation);
+}
+
+/**
+ * Deterministic run normalization:
+ * - stable rules ordering
+ * - stable locations ordering inside each result
+ * - stable results ordering using explicit ranking, NOT localeCompare()
+ */
 function normalizeRun(run: SarifRun): SarifRun {
   const driver = run?.tool?.driver;
   if (!driver) return run;
 
-  const sortedResults = [...(run.results ?? [])].sort((a, b) => {
-    const la = String(a.level ?? '');
-    const lb = String(b.level ?? '');
-    if (la !== lb) return la.localeCompare(lb);
-    const pa = String(a.locations?.[0]?.physicalLocation?.artifactLocation?.uri ?? '');
-    const pb = String(b.locations?.[0]?.physicalLocation?.artifactLocation?.uri ?? '');
-    if (pa !== pb) return pa.localeCompare(pb);
-    const aa = Number(a.locations?.[0]?.physicalLocation?.region?.startLine ?? 0);
-    const bb = Number(b.locations?.[0]?.physicalLocation?.region?.startLine ?? 0);
-    if (aa !== bb) return aa - bb;
-    return String(a.ruleId ?? '').localeCompare(String(b.ruleId ?? ''));
+  const normalizedResults = (run.results ?? []).map((r) => {
+    const out: SarifResult = { ...r };
+    out.locations = normalizeLocations(out.locations);
+    return out;
+  });
+
+  normalizedResults.sort((a, b) => {
+    // 1) severity rank
+    const ra = levelRank(a.level);
+    const rb = levelRank(b.level);
+    const rcmp = cmpNum(ra, rb);
+    if (rcmp !== 0) return rcmp;
+
+    // 2) ruleId (stable)
+    const rid = cmpStr(String(a.ruleId ?? ''), String(b.ruleId ?? ''));
+    if (rid !== 0) return rid;
+
+    // 3) primary location (uri/line/col)
+    const pl = cmpStr(primaryLocationKey(a), primaryLocationKey(b));
+    if (pl !== 0) return pl;
+
+    // 4) fingerprint tie-break (prevents nondeterminism when everything else matches)
+    const fa = String(a.fingerprints?.primaryLocationLineHash ?? '');
+    const fb = String(b.fingerprints?.primaryLocationLineHash ?? '');
+    const fcmp = cmpStr(fa, fb);
+    if (fcmp !== 0) return fcmp;
+
+    // 5) message tie-break (last resort)
+    return cmpStr(String(a.message?.text ?? ''), String(b.message?.text ?? ''));
   });
 
   return {
@@ -123,7 +205,7 @@ function normalizeRun(run: SarifRun): SarifRun {
         rules: dedupeRules(driver.rules),
       },
     },
-    results: sortedResults,
+    results: normalizedResults,
   };
 }
 
@@ -145,24 +227,22 @@ function stableEngineSources(finding: Finding): Array<{
     .sort((a, b) => {
       const aKey = `${a.engineId}:${a.engineRuleId ?? ''}:${a.engineSeverity ?? ''}`;
       const bKey = `${b.engineId}:${b.engineRuleId ?? ''}:${b.engineSeverity ?? ''}`;
-      return aKey.localeCompare(bKey);
+      return cmpStr(aKey, bKey);
     });
 }
 
 function stableEngineIds(finding: Finding): string[] {
-  return [...new Set(stableEngineSources(finding).map((s) => s.engineId))].sort((a, b) => a.localeCompare(b));
+  return [...new Set(stableEngineSources(finding).map((s) => s.engineId))].sort((a, b) => cmpStr(a, b));
 }
 
-// ✅ Stable rule id for merged findings (avoids churn based on which engine created findingId first)
+// ✅ Stable rule id for merged findings (avoids churn)
 function sarifRuleIdForFinding(finding: Finding): string {
   return `mergesafe.finding.${finding.fingerprint}`;
 }
 
 function findingToSarifResultMerged(finding: Finding, redact: boolean): SarifResult {
-  const location = finding.locations?.[0];
   const engineIds = stableEngineIds(finding);
   const multi = engineIds.length > 1;
-
   const foundBy = engineIds.length ? engineIds.join(', ') : 'unknown';
 
   const safeMessage = redact
@@ -171,7 +251,7 @@ function findingToSarifResultMerged(finding: Finding, redact: boolean): SarifRes
 
   const sources = stableEngineSources(finding);
   const tags = Array.isArray(finding.tags)
-    ? [...new Set(finding.tags.map((t) => String(t ?? '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+    ? [...new Set(finding.tags.map((t) => String(t ?? '').trim()).filter(Boolean))].sort((a, b) => cmpStr(a, b))
     : [];
 
   const props = {
@@ -188,25 +268,29 @@ function findingToSarifResultMerged(finding: Finding, redact: boolean): SarifRes
     },
   };
 
+  // ✅ IMPORTANT: include ALL finding locations (not just [0]) then normalize+sort deterministically.
+  const locs = Array.isArray(finding.locations) ? finding.locations : [];
+
   const result: SarifResult = {
     ruleId: sarifRuleIdForFinding(finding),
     level: toSarifLevel(finding.severity),
     message: { text: safeMessage },
-    locations: location
-      ? [
-          {
-            physicalLocation: {
-              artifactLocation: { uri: toSarifUri(location.filePath) },
-              region: { startLine: Math.max(1, location.line ?? 1), startColumn: Math.max(1, location.column ?? 1) },
+    locations: locs.length
+      ? locs.map((l) => ({
+          physicalLocation: {
+            artifactLocation: { uri: toSarifUri(l.filePath) },
+            region: {
+              startLine: Math.max(1, Number(l.line ?? 1)),
+              startColumn: Math.max(1, Number(l.column ?? 1)),
             },
           },
-        ]
+        }))
       : undefined,
     fingerprints: { primaryLocationLineHash: finding.fingerprint },
     properties: props,
   };
 
-  result.locations = normalizeLocations(result);
+  result.locations = normalizeLocations(result.locations);
   return result;
 }
 
@@ -216,7 +300,7 @@ function makeNoteResult(ruleId: string, text: string): SarifResult {
     level: 'note',
     message: { text },
   };
-  result.locations = normalizeLocations(result);
+  result.locations = normalizeLocations(result.locations);
   return result;
 }
 
@@ -314,7 +398,10 @@ function mergedFindingsRun(args: {
     },
     results: [
       ...notes.results,
-      ...[...findings].sort((a, b) => String(a.findingId).localeCompare(String(b.findingId))).map((f) => findingToSarifResultMerged(f, redact)),
+      // stable input ordering; normalizeRun will apply final deterministic ordering
+      ...[...findings]
+        .sort((a, b) => cmpStr(String(a.fingerprint ?? ''), String(b.fingerprint ?? '')))
+        .map((f) => findingToSarifResultMerged(f, redact)),
     ],
   });
 }
@@ -327,14 +414,13 @@ export function mergeSarifRuns(args: {
 }): SarifLog {
   const { outDir, enginesMeta, canonicalFindings, redact } = args;
 
-  // ✅ IMPORTANT: Output a single merged SARIF run so GitHub shows merged results, not duplicates per engine.
   const runs: SarifRun[] = [
     mergedFindingsRun({
       findings: canonicalFindings,
       redact,
       enginesMeta,
     }),
-  ].sort((a, b) => String(a.tool.driver.name).localeCompare(String(b.tool.driver.name)));
+  ].sort((a, b) => cmpStr(String(a.tool.driver.name), String(b.tool.driver.name)));
 
   const log: SarifLog = {
     version: '2.1.0',
@@ -357,6 +443,6 @@ export function toSarif(result: ScanResult): SarifLog {
         redact: result.meta.redacted,
         enginesMeta: result.meta.engines,
       }),
-    ].sort((a, b) => String(a.tool.driver.name).localeCompare(String(b.tool.driver.name))),
+    ].sort((a, b) => cmpStr(String(a.tool.driver.name), String(b.tool.driver.name))),
   };
 }
