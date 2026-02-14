@@ -5,6 +5,33 @@ import type { RawFinding } from "@mergesafe/core";
 import { scanJsTaint } from "./js_taint.js";
 import { emitToolsManifestFindings, type ToolSurface } from "./tools_manifest.js";
 
+/* ------------------------- debug helpers (env-gated) ------------------------- */
+
+const DEBUG_FINGERPRINT =
+  process.env.MERGESAFE_DEBUG_FINGERPRINT === "1" ||
+  String(process.env.MERGESAFE_DEBUG_FINGERPRINT || "").toLowerCase() === "true";
+
+const DEBUG_LIMIT = (() => {
+  const n = Number.parseInt(String(process.env.MERGESAFE_DEBUG_LIMIT ?? "200"), 10);
+  return Number.isFinite(n) && n > 0 ? n : 200;
+})();
+
+function dbg(event: string, payload?: Record<string, unknown>) {
+  if (!DEBUG_FINGERPRINT) return;
+  // Keep logs grep-friendly in GH Actions
+  const msg = payload ? `${event} ${JSON.stringify(payload)}` : event;
+  console.error(`[mergesafe:rules] ${msg}`);
+}
+
+function safeRealpath(p: string): string {
+  try {
+    const native = (fs.realpathSync as unknown as { native?: (p: string) => string }).native;
+    return native ? native(p) : fs.realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
 interface FileInfo {
   // Stable, repo-relative (POSIX) path used in findings/output keys
   filePath: string;
@@ -118,10 +145,11 @@ function normalizeFindingFilePath(filePath: string, targetAbs: string): string {
   const raw = String(filePath ?? "");
   if (!raw) return "unknown";
 
-  const abs = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(targetAbs, raw);
+  const targetRoot = safeRealpath(path.resolve(targetAbs));
+  const abs = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(targetRoot, raw);
 
   // Prefer a stable relative path.
-  let rel = path.relative(targetAbs, abs);
+  let rel = path.relative(targetRoot, abs);
 
   // Avoid empty rel (can happen if filePath == targetAbs)
   if (!rel) rel = path.basename(abs);
@@ -132,9 +160,9 @@ function normalizeFindingFilePath(filePath: string, targetAbs: string): string {
   return toPosix(rel);
 }
 
-function collectFiles(targetPath: string): FileInfo[] {
+function collectFiles(targetAbsInput: string): FileInfo[] {
   const out: FileInfo[] = [];
-  const targetAbs = path.resolve(targetPath);
+  const targetAbs = safeRealpath(path.resolve(targetAbsInput));
 
   const walk = (absPath: string) => {
     let st: fs.Stats;
@@ -323,7 +351,7 @@ function dedupeKeyForFinding(f: RawFinding): string {
   const ev = (f.evidence ?? "").trim().slice(0, 160);
 
   // ✅ make tag component stable even if tag order differs
-  const tagList = Array.isArray((f as any).tags) ? (f as any).tags as string[] : [];
+  const tagList = Array.isArray((f as any).tags) ? ((f as any).tags as string[]) : [];
   const tags = [...new Set(tagList.map((t) => String(t ?? "").trim()).filter(Boolean))].sort(asciiCompare).join(",");
 
   return `${f.ruleId}|${f.filePath}|${f.line}|${f.title}|${ev}|${tags}`;
@@ -333,11 +361,32 @@ export function runDeterministicRules(
   targetPath: string,
   mode: "fast" | "deep" = "fast"
 ): { findings: RawFinding[]; tools: ToolSurface[] } {
-  const targetAbs = path.resolve(targetPath);
+  const targetAbs = safeRealpath(path.resolve(targetPath));
+
+  if (DEBUG_FINGERPRINT) {
+    dbg("start", {
+      platform: process.platform,
+      node: process.version,
+      cwd: process.cwd(),
+      targetPath,
+      targetAbs,
+      mode,
+    });
+  }
+
   const files = collectFiles(targetAbs);
+
+  if (DEBUG_FINGERPRINT) {
+    dbg("files", {
+      count: files.length,
+      sample: files.slice(0, Math.min(10, files.length)).map((f) => f.filePath),
+    });
+  }
 
   const findings: RawFinding[] = [];
   const dedupe = new Set<string>();
+
+  let debugCount = 0;
 
   const pushFinding = (f: RawFinding) => {
     // Normalize ANY incoming finding path (including tools manifest findings)
@@ -351,6 +400,17 @@ export function runDeterministicRules(
     if (dedupe.has(key)) return;
     dedupe.add(key);
     findings.push(normalized);
+
+    if (DEBUG_FINGERPRINT && debugCount < DEBUG_LIMIT) {
+      debugCount++;
+      dbg("finding", {
+        n: debugCount,
+        ruleId: normalized.ruleId,
+        filePath: normalized.filePath,
+        line: normalized.line,
+        title: normalized.title,
+      });
+    }
   };
 
   // 1) Tools manifest policy checks (single source of truth)
@@ -661,6 +721,9 @@ export function runDeterministicRules(
     return stableCompare(a.evidence ?? "", b.evidence ?? "");
   });
 
+  if (DEBUG_FINGERPRINT) {
+    dbg("done", { findings: findings.length, tools: tools.length });
+  }
+
   return { findings, tools };
 }
-

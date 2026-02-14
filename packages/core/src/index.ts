@@ -258,42 +258,118 @@ function normalizePathForKey(p: string): string {
   return toPosixPath(String(p || ''));
 }
 
+/* -------------------------------------------------------------------------- */
+/* Cross-platform deterministic path + fingerprint debug (Windows/Linux parity) */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Enable debug logs (safe in CI):
+ * - MERGESAFE_DEBUG_FINGERPRINT=1 (or MERGESAFE_DEBUG=1)
+ * - MERGESAFE_DEBUG_LIMIT=200
+ */
+const __MS_DEBUG_FP =
+  process.env.MERGESAFE_DEBUG_FINGERPRINT === '1' || process.env.MERGESAFE_DEBUG === '1';
+const __MS_DEBUG_LIMIT = Number(process.env.MERGESAFE_DEBUG_LIMIT ?? 200);
+let __msDebugCount = 0;
+
+function msDebug(event: string, data: Record<string, unknown>) {
+  if (!__MS_DEBUG_FP) return;
+  if (__msDebugCount++ >= __MS_DEBUG_LIMIT) return;
+  try {
+    console.log(`[mergesafe-debug:${event}] ${JSON.stringify(data)}`);
+  } catch {
+    console.log(`[mergesafe-debug:${event}]`, data);
+  }
+}
+
+// Treat Windows drive paths as absolute even when code runs on Linux
+function isWindowsAbs(p: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(p);
+}
+function isAbsAnyOS(p: string): boolean {
+  const s = String(p ?? '');
+  return s.startsWith('/') || s.startsWith('\\') || isWindowsAbs(s);
+}
+
+/**
+ * Normalize absolute-ish paths in a deterministic way across OS.
+ * - Windows drive paths: win32.normalize then POSIX separators
+ * - POSIX paths: posix.normalize on POSIX-ified input
+ */
+function normalizeAbsAnyOS(p: string): string {
+  const s = String(p ?? '');
+  if (!s) return '';
+  if (isWindowsAbs(s)) {
+    return toPosixPath(path.win32.normalize(s));
+  }
+  return toPosixPath(path.posix.normalize(toPosixPath(s)));
+}
+
 /**
  * PR4: Convert a path into repo-relative or absolute form, then POSIX normalize.
- * - scanRoot should be absolute (CLI provides)
- * - if scanRoot is missing, fall back to POSIX-normalized original
+ *
+ * IMPORTANT: This implementation is OS-agnostic:
+ * - It treats Windows drive paths as absolute even on Linux runners.
+ * - It builds/join/relative using path.posix on POSIX-normalized strings.
+ * - It normalizes scanRoot and file paths before computing relative.
  */
 export function normalizePathForOutput(
   filePath: string,
   opts?: { scanRoot?: string; pathMode?: PathMode }
 ): string {
   const raw = String(filePath ?? '');
-  const scanRoot = opts?.scanRoot ? String(opts.scanRoot) : undefined;
+  const rawPosix = toPosixPath(raw);
+
+  const scanRootRaw = opts?.scanRoot ? String(opts.scanRoot) : '';
+  const scanRoot = scanRootRaw ? normalizeAbsAnyOS(scanRootRaw) : '';
   const pathMode: PathMode = opts?.pathMode ?? 'relative';
 
   if (!scanRoot) {
-    // Can't safely relativize without an anchor. Keep stable separators.
-    return toPosixPath(raw);
+    msDebug('path.noScanRoot', {
+      rawPosix,
+      pathMode,
+      rawIsAbsAnyOS: isAbsAnyOS(raw),
+    });
+    return rawPosix;
   }
 
-  // Resolve both to absolute to reduce edge cases like '..' segments.
-  // Note: path.resolve is OS-specific; we convert to POSIX only at the end.
-  const absRoot = path.resolve(scanRoot);
-  const absFile = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(absRoot, raw);
+  const absRoot = scanRoot;
+
+  const absFile = isAbsAnyOS(raw)
+    ? normalizeAbsAnyOS(raw)
+    : normalizeAbsAnyOS(path.posix.join(absRoot, rawPosix));
 
   if (pathMode === 'absolute') {
-    return toPosixPath(absFile);
+    msDebug('path.absolute', {
+      rawPosix,
+      rawIsAbsAnyOS: isAbsAnyOS(raw),
+      scanRootHash: stableHash(absRoot),
+      absFileHash: stableHash(absFile),
+    });
+    return absFile;
   }
 
-  // path.relative uses OS separators, then we normalize to POSIX.
-  let rel = path.relative(absRoot, absFile);
+  let rel = path.posix.relative(absRoot, absFile);
 
   // Ensure a stable no-leading-dot convention.
-  rel = rel.replace(/^[.][\\/]/, '');
+  rel = rel.replace(/^[.][\\/]/, '').replace(/^\.\//, '');
 
-  // If file is outside scanRoot, relative() will include '..'. Keep it (still deterministic),
-  // but normalize separators for display.
-  return toPosixPath(rel);
+  if (!rel) {
+    // Edge case: absFile === absRoot
+    rel = path.posix.basename(absFile) || 'unknown';
+  }
+
+  const out = toPosixPath(rel);
+
+  msDebug('path.relative', {
+    rawPosix,
+    rawIsAbsAnyOS: isAbsAnyOS(raw),
+    scanRootHash: stableHash(absRoot),
+    absFileHash: stableHash(absFile),
+    out,
+  });
+
+  return out;
 }
 
 /**
@@ -319,7 +395,7 @@ export function normalizeFindingPaths(
 }
 
 /**
- * NEW: Canonicalize the path portion of the fingerprint in a cross-platform way.
+ * Canonicalize the path portion of the fingerprint in a cross-platform way.
  * If scanRoot is available, always fingerprint on *relative POSIX* paths,
  * regardless of output mode, so Windows/Linux agree.
  */
@@ -333,6 +409,7 @@ function normalizePathForFingerprint(filePath: string, opts?: { scanRoot?: strin
 
 /**
  * UPDATED: now accepts optional scanRoot anchor to eliminate OS-specific drift.
+ * Also emits opt-in debug logs (hashed) to diagnose CI-only mismatches.
  */
 export function findingFingerprint(
   filePath: string,
@@ -341,8 +418,26 @@ export function findingFingerprint(
   opts?: { scanRoot?: string }
 ): string {
   const fpPath = normalizePathForFingerprint(filePath, opts);
-  const sig = normalizeSignalText(signal);
-  return stableHash(`${fpPath}:${lineBucket(line)}:${stableHash(sig)}`);
+  const bucket = lineBucket(line);
+
+  const sigNorm = normalizeSignalText(signal);
+  const sigHash = stableHash(sigNorm);
+
+  const fp = stableHash(`${fpPath}:${bucket}:${sigHash}`);
+
+  msDebug('fingerprint', {
+    rawPathPosix: toPosixPath(String(filePath ?? '')),
+    rawIsAbsAnyOS: isAbsAnyOS(String(filePath ?? '')),
+    fpPath,
+    scanRootSet: Boolean(opts?.scanRoot),
+    scanRootHash: opts?.scanRoot ? stableHash(normalizeAbsAnyOS(String(opts.scanRoot))) : '',
+    line: Number(line ?? 0),
+    bucket,
+    sigHash,
+    fp,
+  });
+
+  return fp;
 }
 
 const SEVERITY_RANK: Record<Severity, number> = {
@@ -556,7 +651,10 @@ function deriveFamilyKey(finding: Finding): string {
     return 'net-egress';
   }
 
-  if (/\b(secret|token|apikey|api key|credential|bearer)\b/.test(haystack) && /\b(log|print|dump|console)\b/.test(haystack)) {
+  if (
+    /\b(secret|token|apikey|api key|credential|bearer)\b/.test(haystack) &&
+    /\b(log|print|dump|console)\b/.test(haystack)
+  ) {
     return 'secrets-log';
   }
 
@@ -585,8 +683,22 @@ function deriveFamilyKey(finding: Finding): string {
     return 'manifest-risk';
   }
 
-  const noisy = new Set(['potential', 'avoid', 'consider', 'using', 'user', 'controlled', 'input', 'from', 'without', 'with']);
-  const tokens = haystack.split(' ').filter(Boolean).filter((t) => !noisy.has(t));
+  const noisy = new Set([
+    'potential',
+    'avoid',
+    'consider',
+    'using',
+    'user',
+    'controlled',
+    'input',
+    'from',
+    'without',
+    'with',
+  ]);
+  const tokens = haystack
+    .split(' ')
+    .filter(Boolean)
+    .filter((t) => !noisy.has(t));
   return tokens.slice(0, 6).join('-') || 'unknown';
 }
 
@@ -628,7 +740,9 @@ export function toFinding(raw: RawFinding, redact: boolean, opts?: { scanRoot?: 
     confidence: raw.confidence,
     category: raw.category,
     owaspMcpTop10: raw.owaspMcpTop10,
-    engineSources: [{ engineId: 'mergesafe', engineRuleId: raw.ruleId, engineSeverity: raw.severity, message: raw.title }],
+    engineSources: [
+      { engineId: 'mergesafe', engineRuleId: raw.ruleId, engineSeverity: raw.severity, message: raw.title },
+    ],
     locations: [{ filePath: canonicalPath, line: raw.line }],
     evidence: redact
       ? { excerptHash: snippetHash, note: 'Redacted evidence' }

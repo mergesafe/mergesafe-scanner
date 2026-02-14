@@ -20,4 +20,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile=false
       - run: pnpm lint
-      - run: pnpm test
+      - name: pnpm test (debug fingerprints)
+        run: pnpm test
+        env:
+          MERGESAFE_DEBUG_FINGERPRINT: "1"
+          MERGESAFE_DEBUG_LIMIT: "200"
