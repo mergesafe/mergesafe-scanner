@@ -6,7 +6,10 @@ import { scanJsTaint } from "./js_taint.js";
 import { emitToolsManifestFindings, type ToolSurface } from "./tools_manifest.js";
 
 interface FileInfo {
+  // Stable, repo-relative (POSIX) path used in findings/output keys
   filePath: string;
+  // Absolute path used for filesystem reads/stats
+  absPath: string;
   content: string;
   lines: string[];
 }
@@ -63,6 +66,10 @@ const TOOLS_MANIFEST_BASENAMES = new Set([
   "tools.manifest.json",
 ]);
 
+function toPosix(p: string): string {
+  return String(p ?? "").replace(/\\/g, "/");
+}
+
 function isToolsManifestFile(filePath: string): boolean {
   const base = path.basename(filePath).toLowerCase();
   return TOOLS_MANIFEST_BASENAMES.has(base);
@@ -88,41 +95,77 @@ function readTextSafe(p: string): string {
   }
 }
 
+/**
+ * Normalize any file path (absolute or relative) into a stable
+ * repo-relative POSIX path based on targetAbs.
+ *
+ * IMPORTANT: This stabilizes fingerprints across OS/CI runners.
+ */
+function normalizeFindingFilePath(filePath: string, targetAbs: string): string {
+  const raw = String(filePath ?? "");
+  if (!raw) return "unknown";
+
+  const abs = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(targetAbs, raw);
+
+  // Prefer a stable relative path. (For fixtures, everything should be inside targetAbs.)
+  let rel = path.relative(targetAbs, abs);
+
+  // Make sure we don’t return "" (can happen if filePath == targetAbs)
+  if (!rel) rel = path.basename(abs);
+
+  // Strip leading "./" if present and normalize separators
+  rel = rel.replace(/^[.][\\/]/, "");
+
+  return toPosix(rel);
+}
+
 function collectFiles(targetPath: string): FileInfo[] {
   const out: FileInfo[] = [];
+  const targetAbs = path.resolve(targetPath);
 
-  const walk = (p: string) => {
+  const walk = (absPath: string) => {
     let st: fs.Stats;
     try {
-      st = fs.statSync(p);
+      st = fs.statSync(absPath);
     } catch {
       return;
     }
 
     if (st.isDirectory()) {
-      if (shouldSkipDir(p)) return;
+      if (shouldSkipDir(absPath)) return;
 
       let children: string[] = [];
       try {
-        children = fs.readdirSync(p);
+        children = fs.readdirSync(absPath);
       } catch {
         return;
       }
 
       for (const child of children) {
-        walk(path.join(p, child));
+        walk(path.join(absPath, child));
       }
       return;
     }
 
-    const ext = path.extname(p).toLowerCase();
+    const ext = path.extname(absPath).toLowerCase();
     if (!FILE_EXTS.includes(ext)) return;
 
-    const content = readTextSafe(p);
-    out.push({ filePath: p, content, lines: content.split(/\r?\n/) });
+    const content = readTextSafe(absPath);
+
+    // Stable relative path for findings (POSIX)
+    let rel = path.relative(targetAbs, absPath);
+    if (!rel) rel = path.basename(absPath);
+    rel = rel.replace(/^[.][\\/]/, "");
+
+    out.push({
+      filePath: toPosix(rel),
+      absPath,
+      content,
+      lines: content.split(/\r?\n/),
+    });
   };
 
-  walk(targetPath);
+  walk(targetAbs);
   return out;
 }
 
@@ -267,19 +310,28 @@ export function runDeterministicRules(
   targetPath: string,
   mode: "fast" | "deep" = "fast"
 ): { findings: RawFinding[]; tools: ToolSurface[] } {
-  const files = collectFiles(targetPath);
+  const targetAbs = path.resolve(targetPath);
+  const files = collectFiles(targetAbs);
 
   const findings: RawFinding[] = [];
   const dedupe = new Set<string>();
+
   const pushFinding = (f: RawFinding) => {
-    const key = dedupeKeyForFinding(f);
+    // Normalize ANY incoming finding path (including tools manifest findings)
+    const normalized: RawFinding = {
+      ...f,
+      filePath: normalizeFindingFilePath(f.filePath, targetAbs),
+      line: Math.max(1, Number(f.line || 1)),
+    };
+
+    const key = dedupeKeyForFinding(normalized);
     if (dedupe.has(key)) return;
     dedupe.add(key);
-    findings.push(f);
+    findings.push(normalized);
   };
 
   // 1) Tools manifest policy checks (imported, single source of truth)
-  const manifestTools = emitToolsManifestFindings(targetPath, pushFinding);
+  const manifestTools = emitToolsManifestFindings(targetAbs, pushFinding);
 
   // 2) Existing code-surface tool extraction
   const codeTools = extractToolSurface(files);
