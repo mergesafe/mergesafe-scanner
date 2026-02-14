@@ -70,8 +70,9 @@ function toPosix(p: string): string {
   return String(p ?? "").replace(/\\/g, "/");
 }
 
-function isToolsManifestFile(filePath: string): boolean {
-  const base = path.basename(filePath).toLowerCase();
+function isToolsManifestFile(stablePosixPath: string): boolean {
+  // stablePosixPath is already POSIX; use path.posix to avoid platform quirks
+  const base = path.posix.basename(toPosix(stablePosixPath)).toLowerCase();
   return TOOLS_MANIFEST_BASENAMES.has(base);
 }
 
@@ -107,10 +108,10 @@ function normalizeFindingFilePath(filePath: string, targetAbs: string): string {
 
   const abs = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(targetAbs, raw);
 
-  // Prefer a stable relative path. (For fixtures, everything should be inside targetAbs.)
+  // Prefer a stable relative path.
   let rel = path.relative(targetAbs, abs);
 
-  // Make sure we don’t return "" (can happen if filePath == targetAbs)
+  // Avoid empty rel (can happen if filePath == targetAbs)
   if (!rel) rel = path.basename(abs);
 
   // Strip leading "./" if present and normalize separators
@@ -330,13 +331,19 @@ export function runDeterministicRules(
     findings.push(normalized);
   };
 
-  // 1) Tools manifest policy checks (imported, single source of truth)
-  const manifestTools = emitToolsManifestFindings(targetAbs, pushFinding);
+  // 1) Tools manifest policy checks (single source of truth)
+  const manifestToolsRaw = emitToolsManifestFindings(targetAbs, pushFinding);
 
-  // 2) Existing code-surface tool extraction
+  // ✅ Also normalize tool-surface file paths coming from the manifest emitter
+  const manifestTools: ToolSurface[] = (manifestToolsRaw ?? []).map((t) => ({
+    ...t,
+    filePath: normalizeFindingFilePath((t as any).filePath ?? "unknown", targetAbs),
+  }));
+
+  // 2) Existing code-surface tool extraction (already stable because files[] uses stable file.filePath)
   const codeTools = extractToolSurface(files);
 
-  // Merge tool surfaces (manifest + code), dedupe by name+file
+  // Merge tool surfaces (manifest + code), dedupe by filePath+name
   const toolSeen = new Set<string>();
   const tools: ToolSurface[] = [];
   for (const t of [...manifestTools, ...codeTools]) {
@@ -348,11 +355,10 @@ export function runDeterministicRules(
 
   for (const file of files) {
     // Skip manifest files in the generic heuristic scan loop to avoid noise/false positives.
-    // (They are handled deterministically by emitToolsManifestFindings.)
     if (isToolsManifestFile(file.filePath)) continue;
 
     const c = file.content;
-    const ext = path.extname(file.filePath).toLowerCase();
+    const ext = path.posix.extname(toPosix(file.filePath)).toLowerCase();
     const isJs = JS_EXTS.has(ext);
 
     // MS001

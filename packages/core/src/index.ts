@@ -238,7 +238,7 @@ export function toPosixPath(p: string): string {
 }
 
 /**
- * Internal: normalize for stable key usage.
+ * Internal: normalize for stable key usage (no relativization).
  */
 function normalizePathForKey(p: string): string {
   return toPosixPath(String(p || ''));
@@ -286,7 +286,10 @@ export function normalizePathForOutput(
  * PR4: Apply path policy to all finding locations (without changing other fields).
  * This is intended to be called once in CLI before writing outputs.
  */
-export function normalizeFindingPaths(findings: Finding[], opts?: { scanRoot?: string; pathMode?: PathMode }): Finding[] {
+export function normalizeFindingPaths(
+  findings: Finding[],
+  opts?: { scanRoot?: string; pathMode?: PathMode }
+): Finding[] {
   const scanRoot = opts?.scanRoot;
   const pathMode = opts?.pathMode;
 
@@ -301,8 +304,29 @@ export function normalizeFindingPaths(findings: Finding[], opts?: { scanRoot?: s
   });
 }
 
-export function findingFingerprint(filePath: string, line: number, signal: string): string {
-  const fpPath = normalizePathForKey(filePath);
+/**
+ * NEW: Canonicalize the path portion of the fingerprint in a cross-platform way.
+ * If scanRoot is available, always fingerprint on *relative POSIX* paths,
+ * regardless of output mode, so Windows/Linux agree.
+ */
+function normalizePathForFingerprint(filePath: string, opts?: { scanRoot?: string }): string {
+  const scanRoot = opts?.scanRoot ? String(opts.scanRoot) : undefined;
+  if (!scanRoot) return normalizePathForKey(filePath);
+
+  // Always fingerprint on relative paths (stable across OS/machines).
+  return normalizePathForOutput(filePath, { scanRoot, pathMode: 'relative' });
+}
+
+/**
+ * UPDATED: now accepts optional scanRoot anchor to eliminate OS-specific drift.
+ */
+export function findingFingerprint(
+  filePath: string,
+  line: number,
+  signal: string,
+  opts?: { scanRoot?: string }
+): string {
+  const fpPath = normalizePathForFingerprint(filePath, opts);
   const sig = normalizeSignalText(signal);
   return stableHash(`${fpPath}:${lineBucket(line)}:${stableHash(sig)}`);
 }
@@ -507,7 +531,10 @@ function deriveFamilyKey(finding: Finding): string {
   if (/\b(network|egress|ssrf)\b/.test(haystack)) {
     return 'net-egress';
   }
-  if (/\b(http|https|fetch|axios|request|curl|url)\b/.test(haystack) && /\b(allowlist|whitelist|restricted|validate)\b/.test(haystack)) {
+  if (
+    /\b(http|https|fetch|axios|request|curl|url)\b/.test(haystack) &&
+    /\b(allowlist|whitelist|restricted|validate)\b/.test(haystack)
+  ) {
     return 'net-egress';
   }
   if (/\b(http|https|fetch|axios|request|curl|url)\b/.test(haystack)) {
@@ -530,7 +557,11 @@ function deriveFamilyKey(finding: Finding): string {
     return 'dynamic-tool-registration';
   }
 
-  if (/\btools(-|\s)?list\.json\b/.test(haystack) || /\btools manifest\b/.test(haystack) || /\bmanifest\b/.test(haystack)) {
+  if (
+    /\btools(-|\s)?list\.json\b/.test(haystack) ||
+    /\btools manifest\b/.test(haystack) ||
+    /\bmanifest\b/.test(haystack)
+  ) {
     if (/\bexec\b|\bcommand\b|\bshell\b/.test(haystack)) return 'manifest-command-exec';
     if (/\bread\b|\bfile read\b/.test(haystack)) return 'manifest-fs-read';
     if (/\bwrite\b|\bfile write\b/.test(haystack)) return 'manifest-fs-write';
@@ -556,11 +587,24 @@ function mergeKeyForFinding(finding: Finding): string {
   return `${filePath}:${lineBucket(line)}:${category}:${owasp}:${family}`;
 }
 
-export function toFinding(raw: RawFinding, redact: boolean): Finding {
+function stableStringArray(arr: string[] | undefined): string[] {
+  const out = [...new Set((arr ?? []).map((x) => String(x ?? '').trim()).filter(Boolean))];
+  out.sort((a, b) => a.localeCompare(b));
+  return out;
+}
+
+export function toFinding(raw: RawFinding, redact: boolean, opts?: { scanRoot?: string }): Finding {
   const snippetHash = stableHash(raw.evidence);
 
-  const signal = [raw.ruleId, raw.category, raw.owaspMcpTop10, ...(raw.tags ?? []), raw.title].filter(Boolean).join('|');
-  const fingerprint = findingFingerprint(raw.filePath, raw.line, signal);
+  const tags = stableStringArray(raw.tags);
+  const refs = stableStringArray(raw.references);
+
+  const signal = [raw.ruleId, raw.category, raw.owaspMcpTop10, ...tags, raw.title].filter(Boolean).join('|');
+
+  const fingerprint = findingFingerprint(raw.filePath, raw.line, signal, opts);
+
+  // Store a canonical path early (helps merge keys & cross-platform determinism)
+  const canonicalPath = normalizePathForFingerprint(raw.filePath, opts);
 
   return {
     findingId: `${raw.ruleId}-${fingerprint}`,
@@ -570,21 +614,21 @@ export function toFinding(raw: RawFinding, redact: boolean): Finding {
     category: raw.category,
     owaspMcpTop10: raw.owaspMcpTop10,
     engineSources: [{ engineId: 'mergesafe', engineRuleId: raw.ruleId, engineSeverity: raw.severity, message: raw.title }],
-    locations: [{ filePath: normalizePathForKey(raw.filePath), line: raw.line }],
+    locations: [{ filePath: canonicalPath, line: raw.line }],
     evidence: redact
       ? { excerptHash: snippetHash, note: 'Redacted evidence' }
       : { excerpt: raw.evidence, note: 'Static pattern match' },
     remediation: raw.remediation,
-    references: raw.references,
-    tags: raw.tags,
+    references: refs,
+    tags,
     fingerprint,
   };
 }
 
-export function dedupeFindings(rawFindings: RawFinding[], redact: boolean): Finding[] {
+export function dedupeFindings(rawFindings: RawFinding[], redact: boolean, opts?: { scanRoot?: string }): Finding[] {
   const map = new Map<string, Finding>();
   for (const raw of rawFindings) {
-    const finding = toFinding(raw, redact);
+    const finding = toFinding(raw, redact, opts);
     const existing = map.get(finding.fingerprint);
     if (!existing) {
       map.set(finding.fingerprint, finding);

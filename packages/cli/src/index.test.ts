@@ -45,6 +45,12 @@ const rmTempOutDir = (dir: string) => {
   }
 };
 
+const UPDATE_GOLDENS =
+  process.env.MERGESAFE_UPDATE_GOLDENS === '1' ||
+  process.env.MERGESAFE_UPDATE_GOLDENS === 'true' ||
+  process.env.UPDATE_GOLDENS === '1' ||
+  process.env.UPDATE_GOLDENS === 'true';
+
 function normalizeText(input: string): string {
   return String(input ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trimEnd();
 }
@@ -53,20 +59,35 @@ function readTextNormalized(filePath: string): string {
   return normalizeText(fs.readFileSync(filePath, 'utf8'));
 }
 
+function ensureDir(p: string) {
+  fs.mkdirSync(p, { recursive: true });
+}
+
+function writeFileNormalized(p: string, content: string) {
+  ensureDir(path.dirname(p));
+  fs.writeFileSync(p, normalizeText(content) + '\n', 'utf8');
+}
+
 function requireGolden(filePath: string) {
   if (fs.existsSync(filePath)) return;
+
   const rel = path.relative(repoRoot, filePath).replace(/\\/g, '/');
+  const reportRel = path.relative(repoRoot, goldenReportPath).replace(/\\/g, '/');
+  const sarifRel = path.relative(repoRoot, goldenSarifPath).replace(/\\/g, '/');
 
   throw new Error(
     [
       `Missing golden file: ${rel}`,
       '',
       'Generate/update goldens by running (from repo root):',
+      '  MERGESAFE_UPDATE_GOLDENS=1 pnpm -C packages/cli test',
+      '',
+      'Or equivalently generate via CLI scan command:',
       `  pnpm -C packages/cli dev -- scan ${fixtureRel} --fail-on none --path-mode relative --format json,sarif --engines mergesafe --no-auto-install --out-dir test/goldens/node-unsafe-server`,
       '',
-      'This should create:',
-      `  ${path.relative(repoRoot, goldenReportPath).replace(/\\/g, '/')}`,
-      `  ${path.relative(repoRoot, goldenSarifPath).replace(/\\/g, '/')}`,
+      'This should create/update:',
+      `  ${reportRel}`,
+      `  ${sarifRel}`,
     ].join('\n')
   );
 }
@@ -93,14 +114,14 @@ function containsAbsoluteMachinePathInString(s: string): boolean {
   const t = String(s ?? '');
 
   // Windows drive paths:
-  if (/[A-Za-z]:\\/.test(t)) return true;
-  if (/[A-Za-z]:\/(?!\/)/.test(t)) return true;
+  if (/[A-Za-zz]:\\/.test(t)) return true;
+  if (/[A-Za-zz]:\/(?!\/)/.test(t)) return true;
 
   // UNC paths: \\server\share\...
   if (/\\\\[A-Za-z0-9_.-]+\\/.test(t)) return true;
 
   // file:// URIs containing machine paths
-  if (/file:\/\/\/[A-Za-z]:\/(?!\/)/i.test(t)) return true;
+  if (/file:\/\/\/[A-Za-zz]:\/(?!\/)/i.test(t)) return true;
   if (/file:\/\/\/(Users|home|var|tmp|private|Volumes|opt)\//i.test(t)) return true;
 
   // Unix-ish absolute paths that strongly indicate machine-specific leakage
@@ -143,11 +164,9 @@ function canonicalizeScannedPath(p: unknown): unknown {
   if (typeof p !== 'string') return p;
   const posix = p.replace(/\\/g, '/');
 
-  // Prefer trimming to the repo-relative fixture prefix if present
   const idx = posix.lastIndexOf('fixtures/node-unsafe-server');
   if (idx >= 0) return posix.slice(idx);
 
-  // Otherwise strip leading ./ and ../ segments (best effort)
   let s = posix.replace(/^\.\//, '');
   while (s.startsWith('../')) s = s.slice(3);
   return s;
@@ -157,15 +176,12 @@ function scrubReportJsonForGolden(obj: any): any {
   const cloned = JSON.parse(JSON.stringify(obj ?? {}));
 
   if (cloned?.meta) {
-    // normalize scannedPath for stable comparison across different outDirs
     if (typeof cloned.meta.scannedPath === 'string') {
       cloned.meta.scannedPath = canonicalizeScannedPath(cloned.meta.scannedPath);
     }
 
-    // timestamp-like
     if (typeof cloned.meta.generatedAt === 'string') cloned.meta.generatedAt = '<generatedAt>';
 
-    // durations drift run-to-run
     if (Array.isArray(cloned.meta.engines)) {
       for (const e of cloned.meta.engines) {
         if (typeof e?.durationMs === 'number') e.durationMs = 0;
@@ -215,8 +231,10 @@ describe('deterministic outputs goldens', () => {
   test(
     'relative mode produces stable report.json + results.sarif and contains no absolute machine paths',
     async () => {
-      requireGolden(goldenReportPath);
-      requireGolden(goldenSarifPath);
+      if (!UPDATE_GOLDENS) {
+        requireGolden(goldenReportPath);
+        requireGolden(goldenSarifPath);
+      }
 
       const outDir = mkTempOutDir('mergesafe-test-deterministic');
 
@@ -230,7 +248,7 @@ describe('deterministic outputs goldens', () => {
           mode: 'fast',
           timeout: 30,
 
-          // IMPORTANT: match golden default metadata (your goldens show concurrency=4)
+          // IMPORTANT: match golden default metadata
           concurrency: 4,
 
           engines: ['mergesafe'],
@@ -260,13 +278,27 @@ describe('deterministic outputs goldens', () => {
         assertNoAbsoluteMachinePaths(reportRaw);
         assertNoAbsoluteMachinePaths(sarifRaw);
 
+        // If requested, update the golden snapshots from current outputs.
+        if (UPDATE_GOLDENS) {
+          ensureDir(goldensDir);
+          writeFileNormalized(goldenReportPath, reportRaw);
+          writeFileNormalized(goldenSarifPath, sarifRaw);
+        }
+
+        const hint =
+          'Golden mismatch.\n' +
+          'Update goldens (from repo root):\n' +
+          '  MERGESAFE_UPDATE_GOLDENS=1 pnpm -C packages/cli test\n' +
+          'Or generate via CLI:\n' +
+          `  pnpm -C packages/cli dev -- scan ${fixtureRel} --fail-on none --path-mode relative --format json,sarif --engines mergesafe --no-auto-install --out-dir test/goldens/node-unsafe-server`;
+
         const actualReport = normalizeJsonForGolden(reportRaw);
         const goldenReport = normalizeJsonForGolden(readTextNormalized(goldenReportPath));
-        expect(actualReport).toBe(goldenReport);
+        expect(actualReport, hint).toBe(goldenReport);
 
         const actualSarif = normalizeText(sarifRaw);
         const goldenSarif = normalizeText(readTextNormalized(goldenSarifPath));
-        expect(actualSarif).toBe(goldenSarif);
+        expect(actualSarif, hint).toBe(goldenSarif);
       } finally {
         process.chdir(prevCwd);
         rmTempOutDir(outDir);
