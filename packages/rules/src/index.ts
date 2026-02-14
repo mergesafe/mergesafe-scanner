@@ -66,6 +66,18 @@ const TOOLS_MANIFEST_BASENAMES = new Set([
   "tools.manifest.json",
 ]);
 
+/**
+ * Deterministic comparator (avoid locale/ICU differences across OS)
+ */
+function asciiCompare(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+function stableCompare(a: unknown, b: unknown): number {
+  return asciiCompare(String(a ?? ""), String(b ?? ""));
+}
+
 function toPosix(p: string): string {
   return String(p ?? "").replace(/\\/g, "/");
 }
@@ -142,6 +154,9 @@ function collectFiles(targetPath: string): FileInfo[] {
         return;
       }
 
+      // ✅ Deterministic traversal across OS/filesystems
+      children.sort(asciiCompare);
+
       for (const child of children) {
         walk(path.join(absPath, child));
       }
@@ -167,6 +182,9 @@ function collectFiles(targetPath: string): FileInfo[] {
   };
 
   walk(targetAbs);
+
+  // ✅ Deterministic file order
+  out.sort((a, b) => stableCompare(a.filePath, b.filePath));
   return out;
 }
 
@@ -303,7 +321,11 @@ export function extractToolSurface(files: FileInfo[]): ToolSurface[] {
 function dedupeKeyForFinding(f: RawFinding): string {
   // NOTE: manifest findings often land on line=1. Including evidence/tags reduces accidental collapsing.
   const ev = (f.evidence ?? "").trim().slice(0, 160);
-  const tags = Array.isArray((f as any).tags) ? String((f as any).tags.join(",")) : "";
+
+  // ✅ make tag component stable even if tag order differs
+  const tagList = Array.isArray((f as any).tags) ? (f as any).tags as string[] : [];
+  const tags = [...new Set(tagList.map((t) => String(t ?? "").trim()).filter(Boolean))].sort(asciiCompare).join(",");
+
   return `${f.ruleId}|${f.filePath}|${f.line}|${f.title}|${ev}|${tags}`;
 }
 
@@ -619,6 +641,25 @@ export function runDeterministicRules(
       );
     }
   }
+
+  // ✅ Deterministic ordering for outputs/tests
+  tools.sort((a, b) => {
+    const p = stableCompare(a.filePath, b.filePath);
+    if (p !== 0) return p;
+    return stableCompare(a.name, b.name);
+  });
+
+  findings.sort((a, b) => {
+    const p = stableCompare(a.filePath, b.filePath);
+    if (p !== 0) return p;
+    const l = Number(a.line ?? 0) - Number(b.line ?? 0);
+    if (l !== 0) return l;
+    const r = stableCompare(a.ruleId, b.ruleId);
+    if (r !== 0) return r;
+    const t = stableCompare(a.title, b.title);
+    if (t !== 0) return t;
+    return stableCompare(a.evidence ?? "", b.evidence ?? "");
+  });
 
   return { findings, tools };
 }

@@ -201,6 +201,20 @@ export interface RawFinding {
   tags: string[];
 }
 
+/**
+ * Deterministic comparator.
+ * Avoids locale/ICU differences across OS runners (Windows/Linux/macOS).
+ */
+function asciiCompare(a: string, b: string): number {
+  if (a === b) return 0;
+  // JS < / > is deterministic by code unit ordering across platforms.
+  return a < b ? -1 : 1;
+}
+
+function stableCompare(a: unknown, b: unknown): number {
+  return asciiCompare(String(a ?? ''), String(b ?? ''));
+}
+
 export function stableHash(value: string): string {
   return crypto.createHash('sha256').update(value).digest('hex').slice(0, 16);
 }
@@ -381,7 +395,7 @@ function pickBestEvidence(evidences: FindingEvidence[]): FindingEvidence {
   // Prefer an excerpt (longest non-empty), otherwise keep first excerptHash.
   const withExcerpt = evidences
     .filter((e) => typeof e.excerpt === 'string' && e.excerpt.trim().length > 0)
-    .sort((a, b) => b.excerpt!.trim().length - a.excerpt!.trim().length);
+    .sort((a, b) => (b.excerpt!.trim().length - a.excerpt!.trim().length));
 
   if (withExcerpt.length) {
     return {
@@ -435,16 +449,17 @@ export function stableSortFindings(findings: Finding[]): Finding[] {
     if (ap !== bp) return ap - bp;
 
     // category / title / owasp provide extra stability
-    const cat = String(a.category ?? '').localeCompare(String(b.category ?? ''));
+    const cat = stableCompare(a.category, b.category);
     if (cat !== 0) return cat;
 
-    const owasp = String(a.owaspMcpTop10 ?? '').localeCompare(String(b.owaspMcpTop10 ?? ''));
+    const owasp = stableCompare(a.owaspMcpTop10, b.owaspMcpTop10);
     if (owasp !== 0) return owasp;
 
     // location path/line/col
     const aLoc = a.locations?.[0];
     const bLoc = b.locations?.[0];
-    const fp = String(aLoc?.filePath ?? '').localeCompare(String(bLoc?.filePath ?? ''));
+
+    const fp = stableCompare(aLoc?.filePath ?? '', bLoc?.filePath ?? '');
     if (fp !== 0) return fp;
 
     const ln = Number(aLoc?.line ?? 0) - Number(bLoc?.line ?? 0);
@@ -454,13 +469,13 @@ export function stableSortFindings(findings: Finding[]): Finding[] {
     if (col !== 0) return col;
 
     // fingerprint, then title, then findingId
-    const fpa = String(a.fingerprint ?? '').localeCompare(String(b.fingerprint ?? ''));
+    const fpa = stableCompare(a.fingerprint ?? '', b.fingerprint ?? '');
     if (fpa !== 0) return fpa;
 
-    const t = String(a.title ?? '').localeCompare(String(b.title ?? ''));
+    const t = stableCompare(a.title ?? '', b.title ?? '');
     if (t !== 0) return t;
 
-    return String(a.findingId ?? '').localeCompare(String(b.findingId ?? ''));
+    return stableCompare(a.findingId ?? '', b.findingId ?? '');
   });
 
   return arr;
@@ -589,7 +604,7 @@ function mergeKeyForFinding(finding: Finding): string {
 
 function stableStringArray(arr: string[] | undefined): string[] {
   const out = [...new Set((arr ?? []).map((x) => String(x ?? '').trim()).filter(Boolean))];
-  out.sort((a, b) => a.localeCompare(b));
+  out.sort(asciiCompare); // ✅ deterministic across OS
   return out;
 }
 
@@ -669,7 +684,7 @@ export function mergeCanonicalFindings(findings: Finding[]): Finding[] {
       const bp = ENGINE_PRIORITY[bEng] ?? 99;
       if (ap !== bp) return ap - bp;
 
-      return String(a.findingId).localeCompare(String(b.findingId));
+      return stableCompare(a.findingId, b.findingId);
     })[0];
 
     const allSources: EngineSource[] = [];
@@ -699,24 +714,22 @@ export function mergeCanonicalFindings(findings: Finding[]): Finding[] {
       confidence,
 
       engineSources: dedupeEngineSources(allSources).sort((a, b) => {
-        const e = String(a.engineId).localeCompare(String(b.engineId));
+        const e = stableCompare(a.engineId, b.engineId);
         if (e !== 0) return e;
-        const r = String(a.engineRuleId ?? '').localeCompare(String(b.engineRuleId ?? ''));
+        const r = stableCompare(a.engineRuleId ?? '', b.engineRuleId ?? '');
         if (r !== 0) return r;
-        return String(a.message ?? '').localeCompare(String(b.message ?? ''));
+        return stableCompare(a.message ?? '', b.message ?? '');
       }),
 
       tags: [...new Set(allTags.map((t) => String(t || '').trim()).filter(Boolean))]
         .filter((t) => !ENGINE_ID_TAGS.has(normalizeTag(t)))
         .filter((t) => !GENERIC_TAGS.has(normalizeTag(t)))
-        .sort((a, b) => a.localeCompare(b)),
+        .sort(asciiCompare),
 
-      references: [...new Set(allRefs.map((r) => String(r || '').trim()).filter(Boolean))].sort((a, b) =>
-        a.localeCompare(b)
-      ),
+      references: [...new Set(allRefs.map((r) => String(r || '').trim()).filter(Boolean))].sort(asciiCompare),
 
       locations: dedupeLocations(allLocs).sort((a, b) => {
-        const p = String(a.filePath).localeCompare(String(b.filePath));
+        const p = stableCompare(a.filePath, b.filePath);
         if (p !== 0) return p;
         const l = (a.line ?? 0) - (b.line ?? 0);
         if (l !== 0) return l;
@@ -735,13 +748,13 @@ export function mergeCanonicalFindings(findings: Finding[]): Finding[] {
 
     const aLoc = a.locations?.[0];
     const bLoc = b.locations?.[0];
-    const fp = String(aLoc?.filePath ?? '').localeCompare(String(bLoc?.filePath ?? ''));
+    const fp = stableCompare(aLoc?.filePath ?? '', bLoc?.filePath ?? '');
     if (fp !== 0) return fp;
 
     const ln = Number(aLoc?.line ?? 0) - Number(bLoc?.line ?? 0);
     if (ln !== 0) return ln;
 
-    return String(a.title ?? '').localeCompare(String(b.title ?? ''));
+    return stableCompare(a.title ?? '', b.title ?? '');
   });
 }
 
