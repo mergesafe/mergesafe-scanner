@@ -1,7 +1,7 @@
 {
   "meta": {
     "scannedPath": "fixtures/node-unsafe-server",
-    "generatedAt": "2026-02-14T04:52:08.113Z",
+    "generatedAt": "2026-02-14T05:30:05.828Z",
     "mode": "fast",
     "timeout": 30,
     "concurrency": 4,
@@ -12,7 +12,7 @@
         "displayName": "MergeSafe deterministic rules",
         "version": "builtin",
         "status": "ok",
-        "durationMs": 31,
+        "durationMs": 28,
         "installHint": "Built in - no install required."
       }
     ]
