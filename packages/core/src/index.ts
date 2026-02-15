@@ -118,7 +118,7 @@ export interface ScanStatusCounts {
 export interface ScanMeta {
   scannedPath: string;
   generatedAt: string;
-  mode: 'fast' | 'deep';
+  mode: 'standard' | 'fast' | 'deep';
   timeout: number;
   concurrency: number;
   redacted: boolean;
@@ -183,7 +183,7 @@ export type VerifyDownloadsMode = 'off' | 'warn' | 'strict';
 export interface CliConfig {
   outDir: string;
   format: string[];
-  mode: 'fast' | 'deep';
+  mode: 'standard' | 'fast' | 'deep';
   timeout: number;
   concurrency: number;
   failOn: 'critical' | 'high' | 'none';

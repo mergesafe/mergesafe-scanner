@@ -10,6 +10,18 @@ pnpm test
 pnpm -C packages/cli dev -- scan fixtures/node-unsafe-server
 ```
 
+Scan with all available engines:
+
+```bash
+pnpm -C packages/cli dev -- scan fixtures/node-unsafe-server --engines all
+```
+
+Scan with explicit fast mode:
+
+```bash
+pnpm -C packages/cli dev -- scan fixtures/node-unsafe-server --mode fast
+```
+
 Example with explicit outputs:
 
 ```bash
@@ -36,12 +48,12 @@ Default engines are `mergesafe,semgrep,gitleaks,cisco,osv`. Optional supported e
 
 - `--out-dir <dir>` default `mergesafe`
 - `--format <csv>` default `json,html,sarif,md`
-- `--mode fast|deep` default `fast`
+- `--mode standard|fast` default `standard`
 - `--timeout <seconds>`
 - `--concurrency <n>`
 - `--fail-on critical|high|none` default `high`
 - `--config <path>` (optional YAML)
-- `--engines <csv|space-separated>` default `mergesafe,semgrep,gitleaks,cisco,osv` (optional engines like `trivy` require explicit opt-in)
+- `--engines <csv|space-separated|all>` default `mergesafe,semgrep,gitleaks,cisco,osv`; use `all` to include all available engines (including optional engines like `trivy`)
 - `--auto-install <true|false>` default `true`
 - `--no-auto-install` disable tool bootstrap
 - `--redact`
