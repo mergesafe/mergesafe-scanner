@@ -680,3 +680,122 @@ describe('resilience', () => {
     }
   });
 });
+
+describe('built CLI smoke tests', () => {
+  const cliDir = path.resolve(repoRoot, 'packages/cli');
+  const distCli = path.join(cliDir, 'dist', 'index.js');
+
+  function runCmd(cmd: string, args: string[], cwd = repoRoot) {
+    const result = spawnSync(cmd, args, {
+      cwd,
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 120_000,
+      env: { ...process.env },
+    });
+
+    if (result.error) throw result.error;
+    return result;
+  }
+
+  test('build produces runnable dist without workspace runtime imports', () => {
+    const pnpmCmd = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+    const buildRes = runCmd(pnpmCmd, ['-C', 'packages/cli', 'build']);
+    expect(buildRes.status).toBe(0);
+
+    expect(fs.existsSync(distCli)).toBe(true);
+
+    const distText = fs.readFileSync(distCli, 'utf8');
+    expect(distText).not.toContain("from '@mergesafe/core'");
+    expect(distText).not.toContain("from '@mergesafe/engines'");
+    expect(distText).not.toContain("from '@mergesafe/report'");
+    expect(distText).not.toContain("from '@mergesafe/rules'");
+    expect(distText).not.toContain("from '@mergesafe/sarif'");
+
+    const helpRes = runCmd(process.execPath, [distCli, '--help']);
+    expect(helpRes.status).toBe(0);
+    expect(helpRes.stdout).toContain('Usage:');
+
+    const outDir = mkTempOutDir('mergesafe-dist-smoke');
+    try {
+      const scanRes = runCmd(process.execPath, [
+        distCli,
+        'scan',
+        fixtureRel,
+        '--out-dir',
+        outDir,
+        '--format',
+        'json',
+        '--fail-on',
+        'none',
+      ]);
+      expect(scanRes.status).toBe(0);
+
+      const reportPath = path.join(outDir, 'report.json');
+      const resultsPath = path.join(outDir, 'results.json');
+      const outputPath = fs.existsSync(reportPath) ? reportPath : resultsPath;
+      expect(fs.existsSync(outputPath)).toBe(true);
+
+      const report = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+      expect(Array.isArray(report?.meta?.engines)).toBe(true);
+      const engineNames = new Set((report.meta.engines as Array<{ engineId?: string; name?: string }>).map((e) => e.engineId ?? e.name));
+      for (const name of ['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv']) {
+        expect(engineNames.has(name)).toBe(true);
+      }
+    } finally {
+      rmTempOutDir(outDir);
+    }
+  }, 180_000);
+
+  test('npm pack tarball installs and runs as end-user package', () => {
+    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    const packRes = runCmd(npmCmd, ['pack'], cliDir);
+    expect(packRes.status).toBe(0);
+
+    const tarballName = packRes.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .at(-1);
+
+    expect(tarballName).toBeTruthy();
+
+    const tarballPath = path.join(cliDir, tarballName as string);
+    expect(fs.existsSync(tarballPath)).toBe(true);
+
+    const installDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mergesafe-pack-install-'));
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mergesafe-pack-out-'));
+
+    try {
+      expect(runCmd(npmCmd, ['init', '-y'], installDir).status).toBe(0);
+      expect(runCmd(npmCmd, ['install', tarballPath], installDir).status).toBe(0);
+
+      const packagedCliPath = path.join(installDir, 'node_modules', 'mergesafe', 'dist', 'index.js');
+      expect(fs.existsSync(packagedCliPath)).toBe(true);
+
+      const helpRes = runCmd(process.execPath, [packagedCliPath, '--help'], installDir);
+      expect(helpRes.status).toBe(0);
+
+      const scanRes = runCmd(process.execPath, [
+        packagedCliPath,
+        'scan',
+        fixtureAbs,
+        '--out-dir',
+        outDir,
+        '--format',
+        'json',
+        '--fail-on',
+        'none',
+      ], installDir);
+      expect(scanRes.status).toBe(0);
+
+      const reportPath = path.join(outDir, 'report.json');
+      const resultsPath = path.join(outDir, 'results.json');
+      expect(fs.existsSync(reportPath) || fs.existsSync(resultsPath)).toBe(true);
+    } finally {
+      rmTempOutDir(installDir);
+      rmTempOutDir(outDir);
+      if (fs.existsSync(tarballPath)) fs.rmSync(tarballPath, { force: true });
+    }
+  }, 240_000);
+});

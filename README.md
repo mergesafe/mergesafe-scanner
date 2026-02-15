@@ -4,6 +4,21 @@ Offline-first deterministic scanner for MCP server codebases (local scan executi
 
 ## Quickstart
 
+Run MergeSafe directly (publish-ready usage):
+
+```bash
+npx mergesafe scan .
+```
+
+Or install globally:
+
+```bash
+npm i -g mergesafe
+mergesafe scan .
+```
+
+For repo development:
+
 ```bash
 pnpm install
 pnpm test
