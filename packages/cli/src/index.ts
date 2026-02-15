@@ -37,6 +37,9 @@ const BOOLEAN_FLAGS = new Set(['list-engines', 'redact', 'no-auto-install', 'hel
 
 const REPEATABLE_FLAGS = new Set(['cisco-header', 'cisco-stdio-arg']);
 
+export type FailOnScanStatus = 'none' | 'partial' | 'failed' | 'any';
+
+
 function pushOpt(opts: Record<string, OptValue>, key: string, value: string) {
   const cur = opts[key];
   if (cur === undefined) {
@@ -85,6 +88,7 @@ export function getHelpText(target: ParsedArgs['helpTarget'] = 'general'): strin
     '  --timeout <seconds>            Per-engine timeout seconds (default: 30)',
     '  --concurrency <n>              Engine concurrency (default: 4)',
     '  --fail-on <critical|high|none> Fail threshold (default: high)',
+    '  --fail-on-scan-status <none|partial|failed|any> Fail on incomplete scan status (default: none)',
     '  --config <path>                Optional YAML config path',
     '  --engines <list>               Comma/space-separated engines list',
     '  --auto-install <true|false>    Auto-install missing tools (default: true)',
@@ -262,6 +266,12 @@ function parseVerifyDownloadsMode(raw: unknown, fallback: VerifyDownloadsMode): 
   return v === 'off' || v === 'warn' || v === 'strict' ? (v as VerifyDownloadsMode) : fallback;
 }
 
+function parseFailOnScanStatus(raw: unknown, fallback: FailOnScanStatus): FailOnScanStatus {
+  if (typeof raw !== 'string') return fallback;
+  const v = raw.trim().toLowerCase();
+  return v === 'none' || v === 'partial' || v === 'failed' || v === 'any' ? (v as FailOnScanStatus) : fallback;
+}
+
 function parsePathMode(raw: unknown, fallback: PathMode): PathMode {
   if (typeof raw !== 'string') return fallback;
   const v = raw.trim().toLowerCase();
@@ -325,6 +335,10 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfig {
   };
 
   const pathMode = parsePathMode((opts['path-mode'] as any) ?? (cfg.pathMode as any), 'relative');
+  const failOnScanStatus = parseFailOnScanStatus(
+    (opts['fail-on-scan-status'] as any) ?? (cfg.failOnScanStatus as any),
+    'none'
+  );
   const verifyDownloads = parseVerifyDownloadsMode((opts['verify-downloads'] as any) ?? (cfg.verifyDownloads as any), 'warn');
 
   return {
@@ -334,6 +348,7 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfig {
     timeout: Number((opts.timeout as string) ?? cfg.timeout ?? 30),
     concurrency: Number((opts.concurrency as string) ?? cfg.concurrency ?? 4),
     failOn: ((opts['fail-on'] as CliConfig['failOn']) ?? cfg.failOn ?? 'high'),
+    failOnScanStatus,
     redact: Boolean(opts.redact ?? cfg.redact ?? false),
     autoInstall: opts['no-auto-install']
       ? false
@@ -364,7 +379,7 @@ export async function runScan(scanPath: string, config: CliConfig, adapters = de
     normalizeFindingPaths(findings, { scanRoot: scanRootAbs, pathMode })
   );
 
-  const summary = summarize(normalizedFindings, configWithRoot.failOn);
+  const summary = summarize(normalizedFindings, configWithRoot.failOn, { engines: meta });
 
   // PR4: avoid absolute machine paths in default outputs
   const scannedPathForMeta =
@@ -430,6 +445,24 @@ function resolveScanPath(inputPath: string): string {
   return abs;
 }
 
+
+export function shouldFailOnScanStatus(scanStatus: string, mode: FailOnScanStatus): boolean {
+  const status = String(scanStatus ?? '').toUpperCase();
+  if (mode === 'none') return false;
+  if (mode === 'failed') return status === 'FAILED';
+  if (mode === 'partial' || mode === 'any') return status === 'PARTIAL' || status === 'FAILED';
+  return false;
+}
+
+export function computeExitCode(summary: ScanResult['summary'], failOnScanStatus: FailOnScanStatus): number {
+  const gateStatus = String((summary as any)?.gate?.status ?? summary.status ?? 'PASS').toUpperCase();
+  if (gateStatus === 'FAIL') return 2;
+
+  if (shouldFailOnScanStatus(summary.scanStatus, failOnScanStatus)) return 3;
+
+  return 0;
+}
+
 async function main() {
   const parsed = parseArgs(process.argv.slice(2));
 
@@ -454,8 +487,10 @@ async function main() {
 
   console.log(`MergeSafe: wrote outputs to ${outputPath}`);
   console.log(`Engines: ${result.meta.engines?.map((entry) => `${entry.engineId}=${entry.status}`).join(' ') ?? 'none'}`);
-  console.log(`MergeSafe ${result.summary.status} grade ${result.summary.grade} findings=${result.summary.totalFindings}`);
-  process.exitCode = result.summary.status === 'FAIL' ? 2 : 0;
+  console.log(
+    `MergeSafe gate=${result.summary.status} scan=${result.summary.scanStatus} grade ${result.summary.grade} findings=${result.summary.totalFindings}`
+  );
+  process.exitCode = computeExitCode(result.summary, (config.failOnScanStatus as FailOnScanStatus) ?? 'none');
 }
 
 /**

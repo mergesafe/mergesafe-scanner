@@ -28,12 +28,13 @@
     },
     "score": 0,
     "grade": "F",
-    "scanStatus": "COMPLETED",
+    "scanStatus": "OK",
     "gate": {
       "status": "PASS",
       "failOn": "none",
       "reason": "failOn=none (policy gate disabled)"
     },
+    "gateStatus": "PASS",
     "status": "PASS"
   },
   "findings": [
