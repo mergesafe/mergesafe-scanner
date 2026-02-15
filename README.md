@@ -46,6 +46,39 @@ Default engines are `mergesafe,semgrep,gitleaks,cisco,osv`. Optional supported e
 - `--no-auto-install` disable tool bootstrap
 - `--redact`
 - `--verify-downloads <off|warn|strict>` default `warn` in CLI (`strict` in GitHub Action)
+- `--fail-on-scan-status <none|partial|failed|any>` default `none` (separate scan completeness enforcement)
+
+
+## Scan completeness vs policy gate
+
+MergeSafe now reports two independent statuses:
+
+- `scanStatus`: `OK | PARTIAL | FAILED` (did selected engines complete successfully?)
+- `gateStatus`: `PASS | FAIL` (did findings violate `--fail-on` policy?)
+
+Deterministic `scanStatus` rules from selected engines:
+
+- `OK`: all selected engines succeeded.
+- `PARTIAL`: at least one selected engine succeeded and at least one selected engine did not succeed (`failed`, `timeout`, `skipped`, or preflight-failed).
+- `FAILED`: no selected engines succeeded, or a hard error prevented scanning.
+
+Backward-compatible default behavior is unchanged because `--fail-on-scan-status` defaults to `none`.
+
+### Exit codes
+
+| Condition | Exit code |
+|---|---:|
+| Gate passes and scan-status enforcement not triggered | `0` |
+| Gate FAIL (`gateStatus=FAIL`) | `2` |
+| Scan-status enforcement triggered by `--fail-on-scan-status` | `3` |
+
+Resolution precedence when both conditions would fail: **gate failure wins** (`2`).
+
+Examples:
+
+- `--fail-on high`, findings include high severity, and scan is PARTIAL → exit `2`.
+- `--fail-on none --fail-on-scan-status partial`, scan is PARTIAL → exit `3`.
+- `--fail-on none --fail-on-scan-status failed`, scan is PARTIAL → exit `0`.
 
 Windows smoke test:
 

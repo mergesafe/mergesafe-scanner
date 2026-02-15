@@ -68,7 +68,7 @@ describe('mergeSarifRuns', () => {
         bySeverity: { critical: 0, high: 1, medium: 0, low: 0, info: 0 },
         score: 42,
         grade: 'C',
-        scanStatus: 'COMPLETED',
+        scanStatus: 'OK',
         gate: { status: 'PASS', failOn: 'none', reason: 'test' },
         status: 'PASS',
       },

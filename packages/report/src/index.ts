@@ -129,10 +129,10 @@ function uniqueEngineIds(f: Finding): string[] {
  */
 function formatScanStatus(status: string | undefined): string {
   const s = String(status ?? '').toUpperCase();
-  if (s === 'COMPLETED') return 'Completed';
+  if (s === 'OK') return 'OK';
   if (s === 'PARTIAL') return 'Partial';
   if (s === 'FAILED') return 'Failed';
-  return status ? String(status) : 'Completed';
+  return status ? String(status) : 'OK';
 }
 
 /**
@@ -190,26 +190,36 @@ function formatPolicyGate(result: ScanResult): { label: string; detail?: string 
  * Markdown header block (summary.md)
  */
 function markdownStatusBlock(result: ScanResult): string {
-  const scanStatus = formatScanStatus((result.summary as any)?.scanStatus);
+  const scanStatusRaw = String((result.summary as any)?.scanStatus ?? 'OK').toUpperCase();
+  const scanStatus = formatScanStatus(scanStatusRaw);
+  const gateRaw = String(((result.summary as any)?.gate?.status ?? (result.summary as any)?.status ?? 'PASS')).toUpperCase();
+  const gateStatus = gateRaw === 'FAIL' ? 'FAIL' : 'PASS';
   const gate = formatPolicyGate(result);
 
   const gateLine = gate.detail ? `**${gate.label}** (${gate.detail})` : `**${gate.label}**`;
+  const warning = scanStatusRaw !== 'OK' ? '\n> ⚠️ Partial scan: some engines failed or were skipped.' : '';
 
-  return `Scan: **${scanStatus}**
-Policy gate: ${gateLine}
-Risk grade: **${result.summary.grade}** (score ${result.summary.score})`;
+  return `Scan status: **${scanStatus}**\nGate status: **${gateStatus}**\nPolicy gate: ${gateLine}\nRisk grade: **${result.summary.grade}** (score ${result.summary.score})${warning}`;
 }
 
 /**
  * HTML header pills (report.html)
  */
 function htmlHeaderBadges(result: ScanResult): string {
-  const scanLabel = formatScanStatus((result.summary as any)?.scanStatus);
+  const scanStatusRaw = String((result.summary as any)?.scanStatus ?? 'OK').toUpperCase();
+  const scanLabel = formatScanStatus(scanStatusRaw);
+  const gateRaw = String(((result.summary as any)?.gate?.status ?? (result.summary as any)?.status ?? 'PASS')).toUpperCase();
+  const gateStatus = gateRaw === 'FAIL' ? 'FAIL' : 'PASS';
   const gate = formatPolicyGate(result);
+  const warning =
+    scanStatusRaw !== 'OK'
+      ? '<div class="warn">⚠️ Partial scan: some engines failed or were skipped.</div>'
+      : '';
 
   return `
     <div class="meta">
-      <div class="pill"><span class="k">Scan</span> <span class="v">${escapeHtml(scanLabel)}</span></div>
+      <div class="pill"><span class="k">Scan status</span> <span class="v">${escapeHtml(scanLabel)}</span></div>
+      <div class="pill"><span class="k">Gate status</span> <span class="v">${escapeHtml(gateStatus)}</span></div>
       <div class="pill">
         <span class="k">Policy gate</span>
         <span class="v">${escapeHtml(gate.label)}</span>
@@ -219,6 +229,7 @@ function htmlHeaderBadges(result: ScanResult): string {
         String(result.summary.score)
       )}</span></div>
     </div>
+    ${warning}
   `;
 }
 
@@ -416,6 +427,7 @@ export function generateHtmlReport(result: ScanResult): string {
     .pill .k{display:block;font-size:12px;color:#555;font-weight:700;margin-bottom:4px}
     .pill .v{display:block;font-size:16px;font-weight:800}
     .pill .sub{margin-top:6px;font-size:12px;color:#333}
+    .warn{margin:8px 0 12px;padding:10px 12px;border:1px solid #f0c36d;background:#fff8e6;border-radius:8px;color:#7a4b00;font-weight:700}
   </style>
 </head>
 <body>

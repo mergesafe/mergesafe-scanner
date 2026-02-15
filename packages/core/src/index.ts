@@ -44,7 +44,7 @@ export interface Finding {
  * ScanStatus answers: "Did the scan run and how complete was it?"
  * Gate answers: "Does this scan fail CI/policy based on failOn?"
  */
-export type ScanStatus = 'COMPLETED' | 'PARTIAL' | 'FAILED';
+export type ScanStatus = 'OK' | 'PARTIAL' | 'FAILED';
 export type GateStatus = 'PASS' | 'FAIL';
 
 export interface ScanGate {
@@ -65,9 +65,14 @@ export interface ScanSummary {
   scanStatus: ScanStatus;
 
   /**
-   * New: policy/CI gate outcome.
+   * Policy/CI gate outcome.
    */
   gate: ScanGate;
+
+  /**
+   * Additive explicit gate status (same value as gate.status).
+   */
+  gateStatus?: GateStatus;
 
   /**
    * Back-compat: previously used as a PASS/FAIL "status".
@@ -89,6 +94,14 @@ export interface EngineExecutionMeta {
     json?: string;
     sarif?: string;
   };
+}
+
+export type EngineExecutionStatus = EngineExecutionMeta['status'] | 'preflight-failed';
+
+export interface ScanStatusCounts {
+  selected: number;
+  succeeded: number;
+  nonSuccess: number;
 }
 
 export interface ScanMeta {
@@ -163,6 +176,7 @@ export interface CliConfig {
   timeout: number;
   concurrency: number;
   failOn: 'critical' | 'high' | 'none';
+  failOnScanStatus?: 'none' | 'partial' | 'failed' | 'any';
   redact: boolean;
   autoInstall: boolean;
   verifyDownloads?: VerifyDownloadsMode;
@@ -893,26 +907,41 @@ function gateReason(bySeverity: Record<Severity, number>, failOn: CliConfig['fai
 }
 
 /**
- * Derive scan completion from engine meta.
- * - COMPLETED: at least one engine ok AND none failed/timeout
- * - PARTIAL: at least one ok AND some failed/timeout
- * - FAILED: no engine ok AND at least one failed/timeout
- *
- * If engines is missing/empty, default to COMPLETED (caller can override).
+ * Deterministic scan completeness rules from selected engine execution statuses.
+ * - OK: all selected engines succeeded
+ * - PARTIAL: at least one selected engine succeeded and at least one did not
+ * - FAILED: no selected engines succeeded, or a hard scan error occurred
  */
-export function deriveScanStatus(engines?: EngineExecutionMeta[]): ScanStatus {
-  const list = engines ?? [];
-  if (list.length === 0) return 'COMPLETED';
+export function computeScanStatus(
+  statuses: EngineExecutionStatus[],
+  opts?: { hardError?: boolean }
+): { scanStatus: ScanStatus; counts: ScanStatusCounts } {
+  const selected = statuses.length;
+  const succeeded = statuses.filter((s) => s === 'ok').length;
+  const nonSuccess = selected - succeeded;
 
-  const ok = list.some((e) => e.status === 'ok');
-  const bad = list.some((e) => e.status === 'failed' || e.status === 'timeout');
+  if (opts?.hardError) {
+    return { scanStatus: 'FAILED', counts: { selected, succeeded, nonSuccess } };
+  }
 
-  if (ok && bad) return 'PARTIAL';
-  if (ok && !bad) return 'COMPLETED';
-  if (!ok && bad) return 'FAILED';
+  if (selected === 0) {
+    return { scanStatus: 'OK', counts: { selected, succeeded, nonSuccess } };
+  }
 
-  // e.g., all skipped
-  return 'COMPLETED';
+  if (succeeded === selected) {
+    return { scanStatus: 'OK', counts: { selected, succeeded, nonSuccess } };
+  }
+
+  if (succeeded > 0) {
+    return { scanStatus: 'PARTIAL', counts: { selected, succeeded, nonSuccess } };
+  }
+
+  return { scanStatus: 'FAILED', counts: { selected, succeeded, nonSuccess } };
+}
+
+export function deriveScanStatus(engines?: EngineExecutionMeta[], opts?: { hardError?: boolean }): ScanStatus {
+  const statuses = (engines ?? []).map((engine) => engine.status as EngineExecutionStatus);
+  return computeScanStatus(statuses, opts).scanStatus;
 }
 
 export function summarize(
@@ -937,7 +966,7 @@ export function summarize(
   const scanStatus: ScanStatus =
     opts?.scanStatus ??
     deriveScanStatus(opts?.engines) ??
-    'COMPLETED';
+    'OK';
 
   const gate: ScanGate = {
     status: gateStatus,
@@ -953,6 +982,7 @@ export function summarize(
 
     scanStatus,
     gate,
+    gateStatus: gateStatus,
 
     // back-compat alias (deprecated)
     status: gateStatus,

@@ -354,7 +354,7 @@ describe('golden scan', () => {
         expect(result.findings.length).toBeGreaterThan(0);
 
         const md = fs.readFileSync(path.join(outDir, 'summary.md'), 'utf8');
-        expect(md).toContain('Scan: **Completed**');
+        expect(md).toContain('Scan status: **OK**');
         expect(md).toContain('Risk grade:');
         expect(md).toContain('Top Findings');
       } finally {
@@ -400,11 +400,17 @@ describe('option parsing utilities', () => {
     expect(config.engines).toEqual([...DEFAULT_ENGINES]);
     expect(config.autoInstall).toBe(true);
     expect(config.verifyDownloads).toBe('warn');
+    expect(config.failOnScanStatus).toBe('none');
   });
 
   test('resolveConfig parses verify-downloads flag', () => {
     const config = resolveConfig({ 'verify-downloads': 'strict' });
     expect(config.verifyDownloads).toBe('strict');
+  });
+
+  test('resolveConfig parses fail-on-scan-status flag', () => {
+    const config = resolveConfig({ 'fail-on-scan-status': 'failed' });
+    expect(config.failOnScanStatus).toBe('failed');
   });
 
   test('parseListOpt accepts comma and whitespace-separated values', () => {
@@ -469,6 +475,7 @@ describe('help output', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('MergeSafe scan');
     expect(result.stdout).toContain('--fail-on <critical|high|none>');
+    expect(result.stdout).toContain('--fail-on-scan-status <none|partial|failed|any>');
   });
 
   test('list engines help exits 0 and prints list usage', () => {
@@ -490,6 +497,73 @@ describe('help output', () => {
 
     const out = result.stderr + result.stdout;
     expect(out).toContain('Usage: mergesafe scan <path> [options]');
+  });
+});
+
+
+describe('exit code matrix', () => {
+  test('gate FAIL remains exit code 2 even if scan-status enforcement also enabled', () => {
+    const result = runCli([
+      'scan',
+      fixtureRel,
+      '--engines',
+      'mergesafe,trivy',
+      '--no-auto-install',
+      '--fail-on',
+      'high',
+      '--fail-on-scan-status',
+      'any',
+      '--format',
+      'json',
+      '--out-dir',
+      mkTempOutDir('mergesafe-test-exit-gate'),
+    ]);
+
+    if (result.error) throw result.error;
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(2);
+  });
+
+  test('scan-status enforcement returns exit code 3 when configured', () => {
+    const result = runCli([
+      'scan',
+      fixtureRel,
+      '--engines',
+      'mergesafe,trivy',
+      '--no-auto-install',
+      '--fail-on',
+      'none',
+      '--fail-on-scan-status',
+      'partial',
+      '--format',
+      'json',
+      '--out-dir',
+      mkTempOutDir('mergesafe-test-exit-scan'),
+    ]);
+
+    if (result.error) throw result.error;
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(3);
+  });
+
+  test('default fail-on-scan-status=none preserves current exit behavior', () => {
+    const result = runCli([
+      'scan',
+      fixtureRel,
+      '--engines',
+      'mergesafe,trivy',
+      '--no-auto-install',
+      '--fail-on',
+      'none',
+      '--format',
+      'json',
+      '--out-dir',
+      mkTempOutDir('mergesafe-test-exit-default'),
+    ]);
+
+    if (result.error) throw result.error;
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(0);
   });
 });
 
