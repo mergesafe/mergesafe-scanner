@@ -15,7 +15,7 @@ import {
   getHelpText,
 } from './index.js';
 import type { EngineAdapter } from '@mergesafe/engines';
-import { DEFAULT_ENGINES } from '@mergesafe/core';
+import { AVAILABLE_ENGINES, DEFAULT_ENGINES } from '@mergesafe/core';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../../..');
@@ -395,14 +395,25 @@ describe('golden scan', () => {
 });
 
 describe('option parsing utilities', () => {
-  test('resolveConfig defaults engines to multi-engine and auto-install on', () => {
+  test('resolveConfig defaults mode and engines to multi-engine and auto-install on', () => {
     const config = resolveConfig({});
+    expect(config.mode).toBe('standard');
     expect(config.engines).toEqual([...DEFAULT_ENGINES]);
     expect(config.autoInstall).toBe(true);
     expect(config.verifyDownloads).toBe('warn');
     expect(config.failOnScanStatus).toBe('none');
   });
 
+
+  test('resolveConfig keeps fast mode as explicit opt-in', () => {
+    const config = resolveConfig({ mode: 'fast' });
+    expect(config.mode).toBe('fast');
+  });
+
+  test('resolveConfig expands engines=all to all available engines deterministically', () => {
+    const config = resolveConfig({ engines: 'all' });
+    expect(config.engines).toEqual([...AVAILABLE_ENGINES]);
+  });
   test('resolveConfig parses verify-downloads flag', () => {
     const config = resolveConfig({ 'verify-downloads': 'strict' });
     expect(config.verifyDownloads).toBe('strict');
@@ -435,6 +446,44 @@ describe('option parsing utilities', () => {
 
     expect(absOutDir).toBe('C:\\MergeSafe\\mergesafe-test');
     expect(absOutDir.includes('C:\\C:\\')).toBe(false);
+  });
+});
+
+
+describe('mode and engines UX defaults', () => {
+  test('runScan reports mode=standard by default when mode is omitted', async () => {
+    const outDir = mkTempOutDir('mergesafe-test-mode-default');
+    try {
+      const config = resolveConfig({
+        'out-dir': outDir,
+        format: 'json',
+        engines: 'mergesafe',
+        'no-auto-install': true,
+        'fail-on': 'none',
+      });
+      const result = await runScan(fixtureAbs, config);
+      expect(result.meta.mode).toBe('standard');
+    } finally {
+      rmTempOutDir(outDir);
+    }
+  });
+
+  test('runScan reports mode=fast when explicitly requested', async () => {
+    const outDir = mkTempOutDir('mergesafe-test-mode-fast');
+    try {
+      const config = resolveConfig({
+        'out-dir': outDir,
+        format: 'json',
+        mode: 'fast',
+        engines: 'mergesafe',
+        'no-auto-install': true,
+        'fail-on': 'none',
+      });
+      const result = await runScan(fixtureAbs, config);
+      expect(result.meta.mode).toBe('fast');
+    } finally {
+      rmTempOutDir(outDir);
+    }
   });
 });
 
@@ -474,6 +523,8 @@ describe('help output', () => {
     expect(result.signal).toBeNull();
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('MergeSafe scan');
+    expect(result.stdout).toContain('--mode <standard|fast>');
+    expect(result.stdout).toContain('--engines <list|all>');
     expect(result.stdout).toContain('--fail-on <critical|high|none>');
     expect(result.stdout).toContain('--fail-on-scan-status <none|partial|failed|any>');
   });

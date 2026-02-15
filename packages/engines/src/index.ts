@@ -731,7 +731,8 @@ export class MergeSafeAdapter implements EngineAdapter {
   }
 
   async run(ctx: EngineContext): Promise<Finding[]> {
-    const { findings: raw } = runDeterministicRules(ctx.scanPath, ctx.config.mode, {
+    const deterministicMode = ctx.config.mode === 'deep' ? 'deep' : 'fast';
+    const { findings: raw } = runDeterministicRules(ctx.scanPath, deterministicMode, {
       maxFileBytes: ctx.config.maxFileBytes,
     });
     return raw.map((entry) => {

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import YAML from 'yaml';
 import {
+  AVAILABLE_ENGINES,
   DEFAULT_ENGINES,
   summarize,
   type CliConfig,
@@ -84,13 +85,13 @@ export function getHelpText(target: ParsedArgs['helpTarget'] = 'general'): strin
     'Options:',
     '  --out-dir <dir>                Output directory (default: mergesafe)',
     '  --format <csv>                 Output formats (default: json,html,sarif,md)',
-    '  --mode <fast|deep>             Scan mode (default: fast)',
+    '  --mode <standard|fast>         Scan mode (default: standard)',
     '  --timeout <seconds>            Per-engine timeout seconds (default: 30)',
     '  --concurrency <n>              Engine concurrency (default: 4)',
     '  --fail-on <critical|high|none> Fail threshold (default: high)',
     '  --fail-on-scan-status <none|partial|failed|any> Fail on incomplete scan status (default: none)',
     '  --config <path>                Optional YAML config path',
-    '  --engines <list>               Comma/space-separated engines list',
+    '  --engines <list|all>           Comma/space-separated engines list or all available engines',
     '  --auto-install <true|false>    Auto-install missing tools (default: true)',
     '  --no-auto-install              Disable tool auto-install',
     '  --redact                       Redact sensitive fields in output',
@@ -293,6 +294,7 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfig {
   const enginesFromCfg = cfg.engines as string | string[] | undefined;
 
   let engines = parseListOpt(enginesFromArgs ?? enginesFromCfg, [...DEFAULT_ENGINES]);
+  if (engines.includes('all')) engines = [...AVAILABLE_ENGINES];
 
   // --no-cisco force removal
   const noCisco = parseBooleanOpt(opts['no-cisco'] as any, false);
@@ -345,7 +347,7 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfig {
   return {
     outDir: normalizeOutDir((opts['out-dir'] as string) ?? cfg.outDir),
     format: format.length ? format : [...DEFAULT_FORMATS],
-    mode: ((opts.mode as CliConfig['mode']) ?? cfg.mode ?? 'fast'),
+    mode: ((opts.mode as CliConfig['mode']) ?? cfg.mode ?? 'standard'),
     timeout: Number((opts.timeout as string) ?? cfg.timeout ?? 30),
     concurrency: Number((opts.concurrency as string) ?? cfg.concurrency ?? 4),
     failOn: ((opts['fail-on'] as CliConfig['failOn']) ?? cfg.failOn ?? 'high'),

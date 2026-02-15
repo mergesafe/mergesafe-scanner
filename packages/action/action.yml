@@ -6,15 +6,15 @@ inputs:
     required: false
     default: '.'
   mode:
-    description: 'Scan mode'
+    description: 'Scan mode (standard or fast)'
     required: false
-    default: 'fast'
+    default: 'standard'
   fail_on:
     description: 'Fail threshold'
     required: false
     default: 'high'
   engines:
-    description: 'Optional comma-separated engines list (e.g. include trivy); defaults to mergesafe,semgrep,gitleaks,cisco,osv when omitted.'
+    description: 'Optional engines list (comma-separated or all); defaults to mergesafe,semgrep,gitleaks,cisco,osv when omitted. Use all to include optional engines like trivy.'
     required: false
     default: ''
   out_dir:
