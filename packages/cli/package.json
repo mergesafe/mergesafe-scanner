@@ -8,19 +8,41 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsup",
-    "postbuild": "chmod +x dist/index.js",
+    "postbuild": "node scripts/postbuild.mjs",
     "test": "vitest run --passWithNoTests",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "yaml": "^2.7.0",
+    "@babel/parser": "^7.26.10",
+    "@babel/traverse": "^7.26.10",
+    "@babel/types": "^7.26.10"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5",
     "@mergesafe/core": "workspace:*",
     "@mergesafe/report": "workspace:*",
     "@mergesafe/rules": "workspace:*",
     "@mergesafe/sarif": "workspace:*",
-    "yaml": "^2.7.0",
     "@mergesafe/engines": "workspace:*"
   },
-  "devDependencies": {
-    "tsup": "^8.3.5"
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }
