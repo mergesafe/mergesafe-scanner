@@ -5,8 +5,38 @@ import type { RawFinding } from "@mergesafe/core";
 import { scanJsTaint } from "./js_taint.js";
 import { emitToolsManifestFindings, type ToolSurface } from "./tools_manifest.js";
 
+/* ------------------------- debug helpers (env-gated) ------------------------- */
+
+const DEBUG_FINGERPRINT =
+  process.env.MERGESAFE_DEBUG_FINGERPRINT === "1" ||
+  String(process.env.MERGESAFE_DEBUG_FINGERPRINT || "").toLowerCase() === "true";
+
+const DEBUG_LIMIT = (() => {
+  const n = Number.parseInt(String(process.env.MERGESAFE_DEBUG_LIMIT ?? "200"), 10);
+  return Number.isFinite(n) && n > 0 ? n : 200;
+})();
+
+function dbg(event: string, payload?: Record<string, unknown>) {
+  if (!DEBUG_FINGERPRINT) return;
+  // Keep logs grep-friendly in GH Actions
+  const msg = payload ? `${event} ${JSON.stringify(payload)}` : event;
+  console.error(`[mergesafe:rules] ${msg}`);
+}
+
+function safeRealpath(p: string): string {
+  try {
+    const native = (fs.realpathSync as unknown as { native?: (p: string) => string }).native;
+    return native ? native(p) : fs.realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
 interface FileInfo {
+  // Stable, repo-relative (POSIX) path used in findings/output keys
   filePath: string;
+  // Absolute path used for filesystem reads/stats
+  absPath: string;
   content: string;
   lines: string[];
 }
@@ -63,8 +93,25 @@ const TOOLS_MANIFEST_BASENAMES = new Set([
   "tools.manifest.json",
 ]);
 
-function isToolsManifestFile(filePath: string): boolean {
-  const base = path.basename(filePath).toLowerCase();
+/**
+ * Deterministic comparator (avoid locale/ICU differences across OS)
+ */
+function asciiCompare(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+function stableCompare(a: unknown, b: unknown): number {
+  return asciiCompare(String(a ?? ""), String(b ?? ""));
+}
+
+function toPosix(p: string): string {
+  return String(p ?? "").replace(/\\/g, "/");
+}
+
+function isToolsManifestFile(stablePosixPath: string): boolean {
+  // stablePosixPath is already POSIX; use path.posix to avoid platform quirks
+  const base = path.posix.basename(toPosix(stablePosixPath)).toLowerCase();
   return TOOLS_MANIFEST_BASENAMES.has(base);
 }
 
@@ -88,41 +135,84 @@ function readTextSafe(p: string): string {
   }
 }
 
-function collectFiles(targetPath: string): FileInfo[] {
-  const out: FileInfo[] = [];
+/**
+ * Normalize any file path (absolute or relative) into a stable
+ * repo-relative POSIX path based on targetAbs.
+ *
+ * IMPORTANT: This stabilizes fingerprints across OS/CI runners.
+ */
+function normalizeFindingFilePath(filePath: string, targetAbs: string): string {
+  const raw = String(filePath ?? "");
+  if (!raw) return "unknown";
 
-  const walk = (p: string) => {
+  const targetRoot = safeRealpath(path.resolve(targetAbs));
+  const abs = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(targetRoot, raw);
+
+  // Prefer a stable relative path.
+  let rel = path.relative(targetRoot, abs);
+
+  // Avoid empty rel (can happen if filePath == targetAbs)
+  if (!rel) rel = path.basename(abs);
+
+  // Strip leading "./" if present and normalize separators
+  rel = rel.replace(/^[.][\\/]/, "");
+
+  return toPosix(rel);
+}
+
+function collectFiles(targetAbsInput: string): FileInfo[] {
+  const out: FileInfo[] = [];
+  const targetAbs = safeRealpath(path.resolve(targetAbsInput));
+
+  const walk = (absPath: string) => {
     let st: fs.Stats;
     try {
-      st = fs.statSync(p);
+      st = fs.statSync(absPath);
     } catch {
       return;
     }
 
     if (st.isDirectory()) {
-      if (shouldSkipDir(p)) return;
+      if (shouldSkipDir(absPath)) return;
 
       let children: string[] = [];
       try {
-        children = fs.readdirSync(p);
+        children = fs.readdirSync(absPath);
       } catch {
         return;
       }
 
+      // ✅ Deterministic traversal across OS/filesystems
+      children.sort(asciiCompare);
+
       for (const child of children) {
-        walk(path.join(p, child));
+        walk(path.join(absPath, child));
       }
       return;
     }
 
-    const ext = path.extname(p).toLowerCase();
+    const ext = path.extname(absPath).toLowerCase();
     if (!FILE_EXTS.includes(ext)) return;
 
-    const content = readTextSafe(p);
-    out.push({ filePath: p, content, lines: content.split(/\r?\n/) });
+    const content = readTextSafe(absPath);
+
+    // Stable relative path for findings (POSIX)
+    let rel = path.relative(targetAbs, absPath);
+    if (!rel) rel = path.basename(absPath);
+    rel = rel.replace(/^[.][\\/]/, "");
+
+    out.push({
+      filePath: toPosix(rel),
+      absPath,
+      content,
+      lines: content.split(/\r?\n/),
+    });
   };
 
-  walk(targetPath);
+  walk(targetAbs);
+
+  // ✅ Deterministic file order
+  out.sort((a, b) => stableCompare(a.filePath, b.filePath));
   return out;
 }
 
@@ -259,7 +349,11 @@ export function extractToolSurface(files: FileInfo[]): ToolSurface[] {
 function dedupeKeyForFinding(f: RawFinding): string {
   // NOTE: manifest findings often land on line=1. Including evidence/tags reduces accidental collapsing.
   const ev = (f.evidence ?? "").trim().slice(0, 160);
-  const tags = Array.isArray((f as any).tags) ? String((f as any).tags.join(",")) : "";
+
+  // ✅ make tag component stable even if tag order differs
+  const tagList = Array.isArray((f as any).tags) ? ((f as any).tags as string[]) : [];
+  const tags = [...new Set(tagList.map((t) => String(t ?? "").trim()).filter(Boolean))].sort(asciiCompare).join(",");
+
   return `${f.ruleId}|${f.filePath}|${f.line}|${f.title}|${ev}|${tags}`;
 }
 
@@ -267,24 +361,71 @@ export function runDeterministicRules(
   targetPath: string,
   mode: "fast" | "deep" = "fast"
 ): { findings: RawFinding[]; tools: ToolSurface[] } {
-  const files = collectFiles(targetPath);
+  const targetAbs = safeRealpath(path.resolve(targetPath));
+
+  if (DEBUG_FINGERPRINT) {
+    dbg("start", {
+      platform: process.platform,
+      node: process.version,
+      cwd: process.cwd(),
+      targetPath,
+      targetAbs,
+      mode,
+    });
+  }
+
+  const files = collectFiles(targetAbs);
+
+  if (DEBUG_FINGERPRINT) {
+    dbg("files", {
+      count: files.length,
+      sample: files.slice(0, Math.min(10, files.length)).map((f) => f.filePath),
+    });
+  }
 
   const findings: RawFinding[] = [];
   const dedupe = new Set<string>();
+
+  let debugCount = 0;
+
   const pushFinding = (f: RawFinding) => {
-    const key = dedupeKeyForFinding(f);
+    // Normalize ANY incoming finding path (including tools manifest findings)
+    const normalized: RawFinding = {
+      ...f,
+      filePath: normalizeFindingFilePath(f.filePath, targetAbs),
+      line: Math.max(1, Number(f.line || 1)),
+    };
+
+    const key = dedupeKeyForFinding(normalized);
     if (dedupe.has(key)) return;
     dedupe.add(key);
-    findings.push(f);
+    findings.push(normalized);
+
+    if (DEBUG_FINGERPRINT && debugCount < DEBUG_LIMIT) {
+      debugCount++;
+      dbg("finding", {
+        n: debugCount,
+        ruleId: normalized.ruleId,
+        filePath: normalized.filePath,
+        line: normalized.line,
+        title: normalized.title,
+      });
+    }
   };
 
-  // 1) Tools manifest policy checks (imported, single source of truth)
-  const manifestTools = emitToolsManifestFindings(targetPath, pushFinding);
+  // 1) Tools manifest policy checks (single source of truth)
+  const manifestToolsRaw = emitToolsManifestFindings(targetAbs, pushFinding);
 
-  // 2) Existing code-surface tool extraction
+  // ✅ Also normalize tool-surface file paths coming from the manifest emitter
+  const manifestTools: ToolSurface[] = (manifestToolsRaw ?? []).map((t) => ({
+    ...t,
+    filePath: normalizeFindingFilePath((t as any).filePath ?? "unknown", targetAbs),
+  }));
+
+  // 2) Existing code-surface tool extraction (already stable because files[] uses stable file.filePath)
   const codeTools = extractToolSurface(files);
 
-  // Merge tool surfaces (manifest + code), dedupe by name+file
+  // Merge tool surfaces (manifest + code), dedupe by filePath+name
   const toolSeen = new Set<string>();
   const tools: ToolSurface[] = [];
   for (const t of [...manifestTools, ...codeTools]) {
@@ -296,11 +437,10 @@ export function runDeterministicRules(
 
   for (const file of files) {
     // Skip manifest files in the generic heuristic scan loop to avoid noise/false positives.
-    // (They are handled deterministically by emitToolsManifestFindings.)
     if (isToolsManifestFile(file.filePath)) continue;
 
     const c = file.content;
-    const ext = path.extname(file.filePath).toLowerCase();
+    const ext = path.posix.extname(toPosix(file.filePath)).toLowerCase();
     const isJs = JS_EXTS.has(ext);
 
     // MS001
@@ -560,6 +700,29 @@ export function runDeterministicRules(
         )
       );
     }
+  }
+
+  // ✅ Deterministic ordering for outputs/tests
+  tools.sort((a, b) => {
+    const p = stableCompare(a.filePath, b.filePath);
+    if (p !== 0) return p;
+    return stableCompare(a.name, b.name);
+  });
+
+  findings.sort((a, b) => {
+    const p = stableCompare(a.filePath, b.filePath);
+    if (p !== 0) return p;
+    const l = Number(a.line ?? 0) - Number(b.line ?? 0);
+    if (l !== 0) return l;
+    const r = stableCompare(a.ruleId, b.ruleId);
+    if (r !== 0) return r;
+    const t = stableCompare(a.title, b.title);
+    if (t !== 0) return t;
+    return stableCompare(a.evidence ?? "", b.evidence ?? "");
+  });
+
+  if (DEBUG_FINGERPRINT) {
+    dbg("done", { findings: findings.length, tools: tools.length });
   }
 
   return { findings, tools };

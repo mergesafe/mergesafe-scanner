@@ -7,7 +7,7 @@ export interface ToolSurface {
   name: string;
   hints: string[];
   capabilities: string[];
-  filePath: string;
+  filePath: string; // stable repo-relative POSIX path
 }
 
 export type ManifestTool = {
@@ -27,13 +27,30 @@ const TOOLS_MANIFEST_BASENAMES = [
   "tools.manifest.json",
 ];
 
+function toPosix(p: string): string {
+  return String(p ?? "").replace(/\\/g, "/");
+}
+
+function stableRelPath(targetPath: string, absPath: string): string {
+  const targetAbs = path.resolve(targetPath);
+  const abs = path.resolve(absPath);
+
+  let rel = path.relative(targetAbs, abs);
+  if (!rel) rel = path.basename(abs);
+
+  rel = rel.replace(/^[.][\\/]/, "");
+  return toPosix(rel);
+}
+
 /**
  * Finds a tools manifest in the repo root.
  * Prefer canonical filenames, then fall back to "likely" JSON candidates.
  */
 export function findToolsManifestPath(targetPath: string): string | undefined {
+  const targetAbs = path.resolve(targetPath);
+
   for (const base of TOOLS_MANIFEST_BASENAMES) {
-    const p = path.join(targetPath, base);
+    const p = path.resolve(targetAbs, base);
     try {
       if (fs.existsSync(p) && fs.statSync(p).isFile()) return p;
     } catch {
@@ -41,12 +58,16 @@ export function findToolsManifestPath(targetPath: string): string | undefined {
     }
   }
 
-  // bounded fallback: repo root only
+  // bounded fallback: repo root only, deterministic order
   try {
-    const entries = fs.readdirSync(targetPath, { withFileTypes: true });
-    for (const e of entries) {
-      if (!e.isFile()) continue;
-      const name = e.name.toLowerCase();
+    const entries = fs.readdirSync(targetAbs, { withFileTypes: true });
+    const files = entries
+      .filter((e) => e.isFile())
+      .map((e) => e.name)
+      .sort((a, b) => a.localeCompare(b)); // deterministic
+
+    for (const nameRaw of files) {
+      const name = nameRaw.toLowerCase();
       if (!name.endsWith(".json")) continue;
       if (
         name.includes("tools") &&
@@ -54,7 +75,7 @@ export function findToolsManifestPath(targetPath: string): string | undefined {
         !name.includes("package-lock") &&
         !name.includes("pnpm-lock")
       ) {
-        return path.join(targetPath, e.name);
+        return path.resolve(targetAbs, nameRaw);
       }
     }
   } catch {
@@ -128,7 +149,6 @@ function schemaTextLower(schema: any): string {
 
 /** Detects if a hint keyword is mentioned in a NEGATED way (so we should NOT treat it as protection). */
 function isNegated(descLower: string, keyword: string): boolean {
-  // examples: "without allowlist", "no allowlist", "lacks allowlist", "not allowlisted"
   const kw = escapeRegExp(keyword);
   return new RegExp(`\\b(no|without|lacks?|missing|not)\\s+${kw}\\b`, "i").test(descLower);
 }
@@ -230,7 +250,6 @@ export function inferHintsFromManifest(t: ManifestTool): string[] {
   const hasAllowlistMention =
     /(allow[- ]?list|whitelist|allowed hosts|approved hosts|domain allowlist)/i.test(descLower) ||
     ann.allowlist === true ||
-    // schema-based allowlist hint (common patterns)
     st.includes("allowlist") ||
     st.includes("allowedhosts") ||
     st.includes("alloweddomains") ||
@@ -239,20 +258,19 @@ export function inferHintsFromManifest(t: ManifestTool): string[] {
     st.includes("hosts");
 
   const hasAuthMention =
-    /(auth|jwt|api[- ]?key|apikey|requires authentication|bearer)/i.test(descLower) || ann.requiresAuth === true;
+    /(auth|jwt|api[- ]?key|apikey|requires authentication|bearer)/i.test(descLower) ||
+    ann.requiresAuth === true;
 
   const hasConfirmMention =
     /(confirm|approval|approve|human review|requires confirmation)/i.test(descLower) ||
     ann.requiresConfirmation === true;
 
-  // read-only hints are fine; negation isn’t common but we keep it simple
   if (descLower.includes("read-only") || descLower.includes("readonly") || ann.readOnly === true) {
     hints.add("readOnlyHint");
   }
   if (descLower.includes("idempotent") || ann.idempotent === true) hints.add("idempotentHint");
   if (descLower.includes("destructive") || ann.destructive === true) hints.add("destructiveHint");
 
-  // IMPORTANT: don’t treat negated mentions as protection
   if (hasAllowlistMention && !isNegated(descLower, "allowlist") && !isNegated(descLower, "allow-list")) {
     hints.add("allowlist");
   }
@@ -267,19 +285,26 @@ export function inferHintsFromManifest(t: ManifestTool): string[] {
 }
 
 export function loadToolsManifest(targetPath: string): {
-  manifestPath: string;
+  manifestPathAbs: string;
+  manifestPath: string; // stable repo-relative POSIX (for findings/output)
   content: string;
   tools: ManifestTool[];
   parseOk: boolean;
 } | undefined {
-  const manifestPath = findToolsManifestPath(targetPath);
-  if (!manifestPath) return undefined;
+  const manifestPathAbs = findToolsManifestPath(targetPath);
+  if (!manifestPathAbs) return undefined;
 
-  const content = readTextSafe(manifestPath);
+  const content = readTextSafe(manifestPathAbs);
   const parsed = safeJsonParse(content);
-
   const tools = normalizeManifestTools(parsed.value);
-  return { manifestPath, content, tools, parseOk: parsed.ok };
+
+  return {
+    manifestPathAbs,
+    manifestPath: stableRelPath(targetPath, manifestPathAbs),
+    content,
+    tools,
+    parseOk: parsed.ok,
+  };
 }
 
 function mkManifestFinding(args: {
@@ -370,6 +395,7 @@ export function emitToolsManifestFindings(
     const caps = inferToolCapabilitiesFromManifest(tool);
     const hints = inferHintsFromManifest(tool);
 
+    // ✅ stable file path
     surfaces.push({ name, hints, capabilities: caps, filePath: manifestPath });
 
     const evidence = `${name}: ${desc}${
