@@ -3,6 +3,14 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "baseUrl": ".",
+    "paths": {
+      "@mergesafe/core": ["packages/core/src/index.ts"],
+      "@mergesafe/engines": ["packages/engines/src/index.ts"],
+      "@mergesafe/report": ["packages/report/src/index.ts"],
+      "@mergesafe/rules": ["packages/rules/src/index.ts"],
+      "@mergesafe/sarif": ["packages/sarif/src/index.ts"]
+    },
     "strict": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
