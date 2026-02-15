@@ -55,6 +55,21 @@ function displayLocation(f: Finding): string {
   return `${fp}:${line}`;
 }
 
+
+function compactEvidence(f: Finding): string {
+  const parts: string[] = [];
+  if (f.evidence?.matchType) parts.push(`type=${String(f.evidence.matchType)}`);
+  if (f.evidence?.ruleId) parts.push(`rule=${String(f.evidence.ruleId)}`);
+  if (f.evidence?.matchSummary) parts.push(`summary=${scrubMachinePaths(String(f.evidence.matchSummary)).slice(0, 160)}`);
+  if (f.evidence?.matchedSnippet) parts.push(`snippet=${scrubMachinePaths(String(f.evidence.matchedSnippet)).slice(0, 160)}`);
+
+  if (!parts.length) {
+    const fallback = scrubMachinePaths(String(f.evidence?.excerpt ?? f.evidence?.excerptHash ?? '')).slice(0, 160);
+    return fallback || '-';
+  }
+  return parts.join('; ');
+}
+
 function artifactHref(artifactPath?: string): string | undefined {
   if (!artifactPath) return undefined;
 
@@ -263,7 +278,7 @@ export function generateSummaryMarkdown(result: ScanResult): string {
       const attribution = ids.map((id) => label[id] ?? id).join(', ');
       const confirmed = ids.length > 1 ? ' ✅ Multi-engine confirmed' : '';
       const where = displayLocation(f);
-      return `- **${String(f.severity).toUpperCase()}** ${f.title} (${where}) — Found by: ${attribution}${confirmed}`;
+      return `- **${String(f.severity).toUpperCase()}** ${f.title} (${where}) — Found by: ${attribution}${confirmed}\n  - Evidence: ${compactEvidence(f)}`;
     })
     .join('\n');
 
@@ -368,7 +383,8 @@ export function generateHtmlReport(result: ScanResult): string {
       const loc = f.locations?.[0];
       const where = loc ? `${escapeHtml(toPosixPath(loc.filePath))}:${loc.line ?? '-'}` : '-';
 
-      const evidenceText = scrubMachinePaths(f.evidence?.excerpt ?? f.evidence?.excerptHash ?? '');
+      const evidenceText = scrubMachinePaths(f.evidence?.excerpt ?? f.evidence?.excerptHash ?? "");
+      const evidenceCompact = compactEvidence(f);
 
       return `<tr>
         <td>${i + 1}</td>
@@ -384,6 +400,7 @@ export function generateHtmlReport(result: ScanResult): string {
             <summary>Details</summary>
             <p>${escapeHtml(f.remediation)}</p>
             <pre>${escapeHtml(evidenceText)}</pre>
+            <p><strong>Evidence:</strong> ${escapeHtml(evidenceCompact)}</p>
             <p>Engine matrix:</p>
             <ul>${engineDetail || '<li>-</li>'}</ul>
           </details>

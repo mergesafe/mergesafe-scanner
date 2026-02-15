@@ -350,6 +350,19 @@ function canonicalFinding(args: {
   filePath: string;
   line: number;
   evidence: string;
+  evidencePayload?: {
+    ruleId: string;
+    matchType: "regex" | "taint" | "manifest" | "heuristic";
+    matchedSnippet?: string;
+    matchSummary?: string;
+    locations?: Array<{
+      filePath: string;
+      line: number;
+      column?: number;
+      endLine?: number;
+      endColumn?: number;
+    }>;
+  };
   confidence?: Confidence;
   category?: string;
   remediation?: string;
@@ -416,8 +429,22 @@ function canonicalFinding(args: {
     ],
     locations: [{ filePath: normFilePath, line: Math.max(1, Number(args.line ?? 1)) }],
     evidence: args.evidence?.trim()
-      ? { excerpt: args.evidence, note: 'Engine finding evidence' }
-      : { excerptHash, note: 'Evidence hash only (redacted or unavailable)' },
+      ? {
+          excerpt: args.evidence,
+          note: "Engine finding evidence",
+          ...(args.evidencePayload
+            ? {
+                ruleId: args.evidencePayload.ruleId,
+                matchType: args.evidencePayload.matchType,
+                ...(args.evidencePayload.matchSummary ? { matchSummary: args.evidencePayload.matchSummary } : {}),
+                ...(args.evidencePayload.matchedSnippet
+                  ? { matchedSnippet: args.evidencePayload.matchedSnippet.slice(0, 160) }
+                  : {}),
+                ...(args.evidencePayload.locations?.length ? { locations: args.evidencePayload.locations } : {}),
+              }
+            : {}),
+        }
+      : { excerptHash, note: "Evidence hash only (redacted or unavailable)" },
     remediation: args.remediation ?? 'Review and remediate based on engine guidance.',
     references: [],
     tags: Array.from(canonicalTags).filter(Boolean),
@@ -704,7 +731,9 @@ export class MergeSafeAdapter implements EngineAdapter {
   }
 
   async run(ctx: EngineContext): Promise<Finding[]> {
-    const { findings: raw } = runDeterministicRules(ctx.scanPath, ctx.config.mode);
+    const { findings: raw } = runDeterministicRules(ctx.scanPath, ctx.config.mode, {
+      maxFileBytes: ctx.config.maxFileBytes,
+    });
     return raw.map((entry) => {
       // Keep tags/owasp if provided, but also ensure category aligns cross-engine
       const tags = Array.isArray((entry as any).tags) ? (entry as any).tags : [];
@@ -727,6 +756,7 @@ export class MergeSafeAdapter implements EngineAdapter {
         filePath: path.resolve(ctx.scanPath, entry.filePath),
         line: entry.line,
         evidence: ctx.config.redact ? '' : entry.evidence,
+        evidencePayload: (entry as any).evidencePayload,
         confidence: entry.confidence,
         category: cat,
         remediation: entry.remediation,

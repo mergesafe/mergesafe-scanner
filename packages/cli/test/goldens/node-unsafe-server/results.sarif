@@ -173,7 +173,19 @@
                   "engineSeverity": "critical",
                   "message": "Command execution from user-controlled input"
                 }
-              ]
+              ],
+              "evidence": {
+                "ruleId": "MS002",
+                "matchType": "taint",
+                "matchSummary": "source=user_input -> sink=exec",
+                "matchedSnippet": "exec(req.query.cmd);",
+                "locations": [
+                  {
+                    "filePath": "server.js",
+                    "line": 14
+                  }
+                ]
+              }
             }
           }
         },
@@ -220,7 +232,18 @@
                   "engineSeverity": "critical",
                   "message": "Dangerous tool capability: arbitrary command execution exposed"
                 }
-              ]
+              ],
+              "evidence": {
+                "ruleId": "MS012",
+                "matchType": "manifest",
+                "matchSummary": "exec_system_command: Runs an arbitrary system command on the host machine. Intended for advanced admin automation. WARNING: can execute any shell command. | sch",
+                "locations": [
+                  {
+                    "filePath": "tools-list.json",
+                    "line": 4
+                  }
+                ]
+              }
             }
           }
         },
@@ -265,7 +288,18 @@
                   "engineSeverity": "critical",
                   "message": "Dynamic tool registration from untrusted input"
                 }
-              ]
+              ],
+              "evidence": {
+                "ruleId": "MS010",
+                "matchType": "heuristic",
+                "matchedSnippet": "Dynamic tool registration from user input detected",
+                "locations": [
+                  {
+                    "filePath": "server.js",
+                    "line": 20
+                  }
+                ]
+              }
             }
           }
         },
@@ -312,7 +346,18 @@
                   "engineSeverity": "high",
                   "message": "Destructive tools exposed without gating hints"
                 }
-              ]
+              ],
+              "evidence": {
+                "ruleId": "MS001",
+                "matchType": "heuristic",
+                "matchedSnippet": "destructive pattern",
+                "locations": [
+                  {
+                    "filePath": "server.js",
+                    "line": 8
+                  }
+                ]
+              }
             }
           }
         },
@@ -357,7 +402,18 @@
                   "engineSeverity": "high",
                   "message": "Missing auth middleware smell on HTTP MCP endpoints"
                 }
-              ]
+              ],
+              "evidence": {
+                "ruleId": "MS007",
+                "matchType": "heuristic",
+                "matchedSnippet": "Endpoint appears unauthenticated",
+                "locations": [
+                  {
+                    "filePath": "server.js",
+                    "line": 12
+                  }
+                ]
+              }
             }
           }
         },
@@ -405,7 +461,18 @@
                   "engineSeverity": "high",
                   "message": "High-risk tool exposed without gating hints (auth/allowlist/approval)"
                 }
-              ]
+              ],
+              "evidence": {
+                "ruleId": "MS016",
+                "matchType": "manifest",
+                "matchSummary": "exec_system_command: Runs an arbitrary system command on the host machine. Intended for advanced admin automation. WARNING: can execute any shell command. | sch",
+                "locations": [
+                  {
+                    "filePath": "tools-list.json",
+                    "line": 4
+                  }
+                ]
+              }
             }
           }
         },
@@ -453,7 +520,18 @@
                   "engineSeverity": "high",
                   "message": "High-risk tool exposed without gating hints (auth/allowlist/approval)"
                 }
-              ]
+              ],
+              "evidence": {
+                "ruleId": "MS016",
+                "matchType": "manifest",
+                "matchSummary": "read_any_file: Reads the contents of any local file path provided by the user (no allowlist). Useful for debugging and support. | schema props=[path, maxBytes] ",
+                "locations": [
+                  {
+                    "filePath": "tools-list.json",
+                    "line": 18
+                  }
+                ]
+              }
             }
           }
         },
@@ -501,7 +579,18 @@
                   "engineSeverity": "high",
                   "message": "High-risk tool exposed without gating hints (auth/allowlist/approval)"
                 }
-              ]
+              ],
+              "evidence": {
+                "ruleId": "MS016",
+                "matchType": "manifest",
+                "matchSummary": "http_fetch: Fetches any URL and returns the response body. Supports internal hosts and arbitrary headers. Can be used to call internal services. | schema props=",
+                "locations": [
+                  {
+                    "filePath": "tools-list.json",
+                    "line": 31
+                  }
+                ]
+              }
             }
           }
         },
@@ -548,7 +637,19 @@
                   "engineSeverity": "high",
                   "message": "Filesystem write with user-controlled path"
                 }
-              ]
+              ],
+              "evidence": {
+                "ruleId": "MS003",
+                "matchType": "taint",
+                "matchSummary": "source=user_input -> sink=fs.writeFileSync",
+                "matchedSnippet": "fs.writeFileSync(req.query.path, req.body.data);",
+                "locations": [
+                  {
+                    "filePath": "server.js",
+                    "line": 15
+                  }
+                ]
+              }
             }
           }
         },
@@ -596,7 +697,18 @@
                   "engineSeverity": "high",
                   "message": "Dangerous tool capability: arbitrary file read without allowlist"
                 }
-              ]
+              ],
+              "evidence": {
+                "ruleId": "MS013",
+                "matchType": "manifest",
+                "matchSummary": "read_any_file: Reads the contents of any local file path provided by the user (no allowlist). Useful for debugging and support. | schema props=[path, maxBytes] ",
+                "locations": [
+                  {
+                    "filePath": "tools-list.json",
+                    "line": 18
+                  }
+                ]
+              }
             }
           }
         },
@@ -642,7 +754,18 @@
                   "engineSeverity": "high",
                   "message": "Network egress from tool handlers without allowlist"
                 }
-              ]
+              ],
+              "evidence": {
+                "ruleId": "MS004",
+                "matchType": "heuristic",
+                "matchedSnippet": "Outgoing network call in handler without allowlist",
+                "locations": [
+                  {
+                    "filePath": "server.js",
+                    "line": 16
+                  }
+                ]
+              }
             }
           }
         },
@@ -690,7 +813,18 @@
                   "engineSeverity": "high",
                   "message": "Dangerous tool capability: unrestricted network egress without allowlist"
                 }
-              ]
+              ],
+              "evidence": {
+                "ruleId": "MS014",
+                "matchType": "manifest",
+                "matchSummary": "http_fetch: Fetches any URL and returns the response body. Supports internal hosts and arbitrary headers. Can be used to call internal services. | schema props=",
+                "locations": [
+                  {
+                    "filePath": "tools-list.json",
+                    "line": 31
+                  }
+                ]
+              }
             }
           }
         },
@@ -735,7 +869,18 @@
                   "engineSeverity": "high",
                   "message": "Secrets or tokens likely logged or dumped"
                 }
-              ]
+              ],
+              "evidence": {
+                "ruleId": "MS005",
+                "matchType": "heuristic",
+                "matchedSnippet": "Sensitive value appears in logs",
+                "locations": [
+                  {
+                    "filePath": "server.js",
+                    "line": 13
+                  }
+                ]
+              }
             }
           }
         },
@@ -783,7 +928,18 @@
                   "engineSeverity": "high",
                   "message": "Dangerous tool behavior: token/secret logging helper present"
                 }
-              ]
+              ],
+              "evidence": {
+                "ruleId": "MS015",
+                "matchType": "manifest",
+                "matchSummary": "log_debug_token: Debug helper that prints tokens/keys during troubleshooting. (Should never be enabled in production.) | schema props=[token] required=[token]",
+                "locations": [
+                  {
+                    "filePath": "tools-list.json",
+                    "line": 49
+                  }
+                ]
+              }
             }
           }
         },
@@ -828,7 +984,18 @@
                   "engineSeverity": "medium",
                   "message": "Overly-broad OAuth scope patterns in config"
                 }
-              ]
+              ],
+              "evidence": {
+                "ruleId": "MS006",
+                "matchType": "heuristic",
+                "matchedSnippet": "Broad OAuth scope detected",
+                "locations": [
+                  {
+                    "filePath": "server.js",
+                    "line": 9
+                  }
+                ]
+              }
             }
           }
         },
@@ -873,7 +1040,18 @@
                   "engineSeverity": "medium",
                   "message": "Unsafe defaults (debug/allow-all)"
                 }
-              ]
+              ],
+              "evidence": {
+                "ruleId": "MS008",
+                "matchType": "heuristic",
+                "matchedSnippet": "Unsafe permissive defaults found",
+                "locations": [
+                  {
+                    "filePath": "server.js",
+                    "line": 10
+                  }
+                ]
+              }
             }
           }
         },
@@ -918,7 +1096,18 @@
                   "engineSeverity": "medium",
                   "message": "Tool descriptions claim read-only but code suggests writes/egress"
                 }
-              ]
+              ],
+              "evidence": {
+                "ruleId": "MS009",
+                "matchType": "heuristic",
+                "matchedSnippet": "Read-only claim conflicts with mutating capabilities",
+                "locations": [
+                  {
+                    "filePath": "server.js",
+                    "line": 7
+                  }
+                ]
+              }
             }
           }
         }

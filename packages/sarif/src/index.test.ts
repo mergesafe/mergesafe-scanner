@@ -15,7 +15,14 @@ function mkFinding(engineId: string): Finding {
     owaspMcpTop10: 'MCP-A01',
     engineSources: [{ engineId, engineRuleId: 'RULE1', engineSeverity: 'high', message: 'Sample' }],
     locations: [{ filePath: 'src/test.ts', line: 10, column: 1 }],
-    evidence: { excerpt: 'const token = "abc"', note: 'test' },
+    evidence: {
+      excerpt: 'const token = "abc"',
+      note: 'test',
+      ruleId: 'MS005',
+      matchType: 'regex',
+      matchedSnippet: 'console.log(token)',
+      locations: [{ filePath: 'src/test.ts', line: 10, column: 1 }],
+    },
     remediation: 'Fix it',
     references: [],
     tags: [],
@@ -95,5 +102,35 @@ describe('mergeSarifRuns', () => {
         expect(location.physicalLocation.region?.startLine ?? 0).toBeGreaterThanOrEqual(1);
       }
     }
+  });
+});
+
+
+describe('sarif evidence properties', () => {
+  test('includes machine-readable evidence payload under properties.mergesafe.evidence', () => {
+    const sarif = toSarif({
+      findings: [mkFinding('mergesafe')],
+      summary: {
+        totalFindings: 1,
+        bySeverity: { critical: 0, high: 1, medium: 0, low: 0, info: 0 },
+        score: 10,
+        grade: 'D',
+        scanStatus: 'OK',
+        gate: { status: 'PASS', failOn: 'none', reason: 'test' },
+        status: 'PASS',
+      },
+      meta: {
+        scannedPath: '.',
+        generatedAt: new Date().toISOString(),
+        mode: 'fast',
+        timeout: 30,
+        concurrency: 1,
+        redacted: false,
+      },
+    });
+
+    const result = sarif.runs[0]?.results?.[0];
+    expect(result?.properties?.mergesafe?.evidence?.ruleId).toBe('MS005');
+    expect(result?.properties?.mergesafe?.evidence?.matchType).toBe('regex');
   });
 });

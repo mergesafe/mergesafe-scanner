@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'vitest';
-import { AVAILABLE_ENGINES, DEFAULT_ENGINES, computeScanStatus, deriveScanStatus } from './index.js';
+import {
+  AVAILABLE_ENGINES,
+  DEFAULT_ENGINES,
+  computeScanStatus,
+  deriveScanStatus,
+  toFinding,
+  type RawFinding,
+} from './index.js';
 
 describe('engine constants', () => {
   test('DEFAULT_ENGINES remains the canonical default engine set', () => {
@@ -44,5 +51,37 @@ describe('scanStatus computation', () => {
         { engineId: 'b', displayName: 'B', version: '1', status: 'failed', durationMs: 1 },
       ])
     ).toBe('PARTIAL');
+  });
+});
+
+
+describe('deterministic evidence payload mapping', () => {
+  test('toFinding preserves structured evidence payload', () => {
+    const raw: RawFinding = {
+      ruleId: 'MS002',
+      title: 'Command execution from user-controlled input',
+      severity: 'critical',
+      confidence: 'medium',
+      category: 'injection',
+      owaspMcpTop10: 'MCP-A03',
+      filePath: 'src/index.ts',
+      line: 12,
+      evidence: 'exec(req.query.cmd)',
+      evidencePayload: {
+        ruleId: 'MS002',
+        matchType: 'taint',
+        matchSummary: 'source=user_input -> sink=exec',
+        locations: [{ filePath: 'src/index.ts', line: 12, column: 1 }],
+      },
+      remediation: 'Avoid shell execution',
+      references: [],
+      tags: ['exec'],
+    };
+
+    const finding = toFinding(raw, false, { scanRoot: process.cwd() });
+    expect(finding.evidence.ruleId).toBe('MS002');
+    expect(finding.evidence.matchType).toBe('taint');
+    expect(finding.evidence.matchSummary).toContain('source=user_input');
+    expect(finding.evidence.locations?.[0]?.filePath).toBe('src/index.ts');
   });
 });

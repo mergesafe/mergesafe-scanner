@@ -15,6 +15,17 @@ export interface FindingEvidence {
   excerpt?: string;
   excerptHash?: string;
   note: string;
+  ruleId?: string;
+  matchType?: 'regex' | 'taint' | 'manifest' | 'heuristic';
+  matchedSnippet?: string;
+  matchSummary?: string;
+  locations?: Array<{
+    filePath: string;
+    line: number;
+    column?: number;
+    endLine?: number;
+    endColumn?: number;
+  }>;
 }
 
 export interface EngineSource {
@@ -180,6 +191,7 @@ export interface CliConfig {
   redact: boolean;
   autoInstall: boolean;
   verifyDownloads?: VerifyDownloadsMode;
+  maxFileBytes?: number;
   engines?: string[];
 
   /**
@@ -212,6 +224,19 @@ export interface RawFinding {
   filePath: string;
   line: number;
   evidence: string;
+  evidencePayload?: {
+    ruleId: string;
+    matchType: 'regex' | 'taint' | 'manifest' | 'heuristic';
+    matchedSnippet?: string;
+    matchSummary?: string;
+    locations?: Array<{
+      filePath: string;
+      line: number;
+      column?: number;
+      endLine?: number;
+      endColumn?: number;
+    }>;
+  };
   remediation: string;
   references: string[];
   tags: string[];
@@ -503,22 +528,54 @@ function dedupeLocations(locs: FindingLocation[]): FindingLocation[] {
 }
 
 function pickBestEvidence(evidences: FindingEvidence[]): FindingEvidence {
+  const structured = evidences.find(
+    (e) =>
+      Boolean(e.ruleId) ||
+      Boolean(e.matchType) ||
+      Boolean(e.matchSummary) ||
+      Boolean(e.matchedSnippet) ||
+      Boolean(e.locations?.length)
+  );
+
   // Prefer an excerpt (longest non-empty), otherwise keep first excerptHash.
   const withExcerpt = evidences
     .filter((e) => typeof e.excerpt === 'string' && e.excerpt.trim().length > 0)
-    .sort((a, b) => (b.excerpt!.trim().length - a.excerpt!.trim().length));
+    .sort((a, b) => b.excerpt!.trim().length - a.excerpt!.trim().length);
 
   if (withExcerpt.length) {
+    const base = withExcerpt[0];
     return {
-      excerpt: withExcerpt[0].excerpt,
+      excerpt: base.excerpt,
       note: 'Merged evidence (best available excerpt)',
+      ...(structured?.ruleId ? { ruleId: structured.ruleId } : {}),
+      ...(structured?.matchType ? { matchType: structured.matchType } : {}),
+      ...(structured?.matchSummary ? { matchSummary: structured.matchSummary } : {}),
+      ...(structured?.matchedSnippet ? { matchedSnippet: structured.matchedSnippet } : {}),
+      ...(structured?.locations?.length ? { locations: structured.locations } : {}),
     };
   }
 
   const withHash = evidences.find((e) => typeof e.excerptHash === 'string' && e.excerptHash.trim().length > 0);
-  return withHash
-    ? { excerptHash: withHash.excerptHash, note: 'Merged evidence (hash only)' }
-    : { note: 'Merged evidence unavailable' };
+  if (withHash) {
+    return {
+      excerptHash: withHash.excerptHash,
+      note: 'Merged evidence (hash only)',
+      ...(structured?.ruleId ? { ruleId: structured.ruleId } : {}),
+      ...(structured?.matchType ? { matchType: structured.matchType } : {}),
+      ...(structured?.matchSummary ? { matchSummary: structured.matchSummary } : {}),
+      ...(structured?.matchedSnippet ? { matchedSnippet: structured.matchedSnippet } : {}),
+      ...(structured?.locations?.length ? { locations: structured.locations } : {}),
+    };
+  }
+
+  return {
+    note: 'Merged evidence unavailable',
+    ...(structured?.ruleId ? { ruleId: structured.ruleId } : {}),
+    ...(structured?.matchType ? { matchType: structured.matchType } : {}),
+    ...(structured?.matchSummary ? { matchSummary: structured.matchSummary } : {}),
+    ...(structured?.matchedSnippet ? { matchedSnippet: structured.matchedSnippet } : {}),
+    ...(structured?.locations?.length ? { locations: structured.locations } : {}),
+  };
 }
 
 /**
@@ -749,6 +806,27 @@ export function toFinding(raw: RawFinding, redact: boolean, opts?: { scanRoot?: 
   // Store a canonical path early (helps merge keys & cross-platform determinism)
   const canonicalPath = normalizePathForFingerprint(raw.filePath, opts);
 
+  const payload = raw.evidencePayload;
+  const normalizedPayloadLocations = (payload?.locations ?? [])
+    .map((loc) => ({
+      filePath: normalizePathForFingerprint(loc.filePath, opts),
+      line: Math.max(1, Number(loc.line ?? 1)),
+      column: loc.column,
+      endLine: loc.endLine,
+      endColumn: loc.endColumn,
+    }))
+    .sort((a, b) => {
+      const p = stableCompare(a.filePath, b.filePath);
+      if (p !== 0) return p;
+      const l = Number(a.line ?? 0) - Number(b.line ?? 0);
+      if (l !== 0) return l;
+      const c = Number(a.column ?? 0) - Number(b.column ?? 0);
+      if (c !== 0) return c;
+      const el = Number(a.endLine ?? 0) - Number(b.endLine ?? 0);
+      if (el !== 0) return el;
+      return Number(a.endColumn ?? 0) - Number(b.endColumn ?? 0);
+    });
+
   return {
     findingId: `${raw.ruleId}-${fingerprint}`,
     title: raw.title,
@@ -762,7 +840,19 @@ export function toFinding(raw: RawFinding, redact: boolean, opts?: { scanRoot?: 
     locations: [{ filePath: canonicalPath, line: raw.line }],
     evidence: redact
       ? { excerptHash: snippetHash, note: 'Redacted evidence' }
-      : { excerpt: raw.evidence, note: 'Static pattern match' },
+      : {
+          excerpt: raw.evidence,
+          note: 'Static pattern match',
+          ...(payload
+            ? {
+                ruleId: payload.ruleId,
+                matchType: payload.matchType,
+                ...(payload.matchSummary ? { matchSummary: payload.matchSummary } : {}),
+                ...(payload.matchedSnippet ? { matchedSnippet: payload.matchedSnippet.slice(0, 160) } : {}),
+                ...(normalizedPayloadLocations.length ? { locations: normalizedPayloadLocations } : {}),
+              }
+            : {}),
+        },
     remediation: raw.remediation,
     references: refs,
     tags,
