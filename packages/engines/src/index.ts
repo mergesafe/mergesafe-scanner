@@ -117,7 +117,10 @@ async function resolvePathBinary(name: string): Promise<string | undefined> {
       process.platform === 'win32'
         ? await execFilePromise('where.exe', [name])
         : await execFilePromise('sh', ['-lc', `command -v ${quoteShellArg(name)}`]);
-    return stdout.split(/\r?\n/).map((x) => x.trim()).find(Boolean);
+    return stdout
+      .split(/\r?\n/)
+      .map((x) => x.trim())
+      .find(Boolean);
   } catch {
     return undefined;
   }
@@ -127,12 +130,34 @@ function toPosixPath(p: string): string {
   return String(p || '').replace(/\\/g, '/');
 }
 
-function normalizePathForFinding(filePath: string): string {
+/**
+ * Normalize a path for findings:
+ * - prefer repo/scan-root relative paths for determinism (reproducible reports across machines)
+ * - fall back to absolute only when the file is outside the scanRoot
+ */
+function normalizePathForFinding(filePath: string, scanRoot?: string): string {
   const v = String(filePath || '').trim();
   if (!v) return '';
+
   const abs = path.isAbsolute(v) ? v : path.resolve(process.cwd(), v);
-  // stable across OS + stable for report rendering
-  return toPosixPath(path.normalize(abs));
+  const absNorm = path.normalize(abs);
+
+  if (scanRoot) {
+    const rootAbs = path.resolve(scanRoot);
+    const rootNorm = path.normalize(rootAbs);
+    const rel = path.relative(rootNorm, absNorm);
+
+    // If inside scanRoot, use relative path (stable across hosts)
+    if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+      return toPosixPath(rel);
+    }
+
+    // If absNorm equals rootNorm (edge), keep a stable token
+    if (!rel) return '.';
+  }
+
+  // otherwise fall back to absolute (still posix for rendering)
+  return toPosixPath(absNorm);
 }
 
 function normalizeKeyText(input: string): string {
@@ -275,6 +300,7 @@ function inferOwaspFromCodes(codes: string[], category?: string): string | undef
  * - engine-neutral fingerprinting (signal codes only)
  * - normalize category to avoid cross-engine duplicate rows
  * - keep engineSources so report can show "Found by"
+ * - repo/scan-root relative paths for deterministic output
  */
 function canonicalFinding(args: {
   engineId: string;
@@ -290,8 +316,9 @@ function canonicalFinding(args: {
   remediation?: string;
   owaspMcpTop10?: string;
   tags?: string[];
+  scanRoot?: string;
 }): Finding {
-  const normFilePath = normalizePathForFinding(args.filePath);
+  const normFilePath = normalizePathForFinding(args.filePath, args.scanRoot);
 
   const tagsLower = uniqueLower([...(args.tags ?? [])]);
   // keep engineId as a tag for display if you want; core/report can ignore it
@@ -320,7 +347,15 @@ function canonicalFinding(args: {
   // add canonical tags for merge friendliness (helps family inference in core)
   const canonicalTags = new Set<string>(mergedTags);
   for (const c of codes) {
-    if (c === 'exec' || c === 'fs-read' || c === 'fs-write' || c === 'net-egress' || c === 'secrets' || c === 'dependencies' || c === 'gating-missing') {
+    if (
+      c === 'exec' ||
+      c === 'fs-read' ||
+      c === 'fs-write' ||
+      c === 'net-egress' ||
+      c === 'secrets' ||
+      c === 'dependencies' ||
+      c === 'gating-missing'
+    ) {
       canonicalTags.add(c);
     }
   }
@@ -360,13 +395,13 @@ function engineArtifactBase(ctx: EngineContext, engineId: string): string {
 
 function normalizePathForScan(scanPath: string, p: string): string {
   const v = String(p || '').trim();
-  if (!v) return normalizePathForFinding(path.resolve(scanPath, 'unknown'));
+  if (!v) return normalizePathForFinding(path.resolve(scanPath, 'unknown'), scanPath);
   const abs = path.isAbsolute(v) ? v : path.resolve(scanPath, v);
-  return normalizePathForFinding(abs);
+  return normalizePathForFinding(abs, scanPath);
 }
 
 export function getToolsDir(): string {
-  const root = process.env.MERGESAFE_TOOLS_DIR || path.join(os.homedir(), '.mergesafe', 'tools');
+  const root = path.resolve(process.env.MERGESAFE_TOOLS_DIR || path.join(os.homedir(), '.mergesafe', 'tools'));
   fs.mkdirSync(root, { recursive: true });
   return root;
 }
@@ -450,14 +485,24 @@ function findFileRecursive(root: string, matcher: (name: string) => boolean): st
   return undefined;
 }
 
+function githubHeaders(): Record<string, string> {
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || process.env.MERGESAFE_GITHUB_TOKEN;
+  const headers: Record<string, string> = {
+    'User-Agent': 'mergesafe-scanner',
+    Accept: 'application/vnd.github+json',
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
 async function fetchJson(url: string): Promise<any> {
-  const res = await fetch(url, { headers: { 'User-Agent': 'mergesafe-scanner' } });
+  const res = await fetch(url, { headers: githubHeaders() });
   if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
   return res.json();
 }
 
 async function downloadFile(url: string, dest: string): Promise<void> {
-  const res = await fetch(url, { headers: { 'User-Agent': 'mergesafe-scanner' } });
+  const res = await fetch(url, { headers: githubHeaders() });
   if (!res.ok) throw new Error(`Failed download ${url}: ${res.status}`);
   await fs.promises.mkdir(path.dirname(dest), { recursive: true });
   await fs.promises.writeFile(dest, Buffer.from(await res.arrayBuffer()));
@@ -466,22 +511,28 @@ async function downloadFile(url: string, dest: string): Promise<void> {
 function makeAssetMatcher(tool: 'gitleaks' | 'osv-scanner' | 'trivy') {
   return (name: string): boolean => {
     const value = name.toLowerCase();
+
+    // OSV-Scanner: Windows assets are commonly .zip (not .exe)
     if (tool === 'osv-scanner') {
-      if (process.platform === 'win32') return /windows.*amd64.*\.exe$/.test(value);
-      if (process.platform === 'linux') return /linux.*amd64/.test(value);
-      if (process.platform === 'darwin' && process.arch === 'arm64') return /darwin.*arm64/.test(value);
-      if (process.platform === 'darwin') return /darwin.*amd64/.test(value);
+      if (process.platform === 'win32') return /windows.*amd64.*(\.zip|\.exe)$/.test(value);
+      if (process.platform === 'linux') return /linux.*amd64.*(\.tar\.gz|\.tgz|\.zip)?$/.test(value);
+      if (process.platform === 'darwin' && process.arch === 'arm64') return /darwin.*arm64.*(\.tar\.gz|\.tgz|\.zip)?$/.test(value);
+      if (process.platform === 'darwin') return /darwin.*amd64.*(\.tar\.gz|\.tgz|\.zip)?$/.test(value);
     }
+
+    // Trivy: known naming conventions
     if (tool === 'trivy') {
       if (process.platform === 'win32') return /windows.*64bit.*\.zip$/.test(value);
       if (process.platform === 'linux') return /linux.*64bit.*\.tar\.gz$/.test(value);
       if (process.platform === 'darwin' && process.arch === 'arm64') return /macos.*arm64.*\.tar\.gz$/.test(value);
       if (process.platform === 'darwin') return /macos.*64bit.*\.tar\.gz$/.test(value);
     }
+
+    // Default (gitleaks): typical x64 patterns
     if (process.platform === 'win32') return /windows.*x64.*\.zip$/.test(value);
-    if (process.platform === 'linux') return /linux.*x64.*\.tar\.gz$/.test(value);
+    if (process.platform === 'linux') return /linux.*(x64|amd64).*\.tar\.gz$/.test(value);
     if (process.platform === 'darwin' && process.arch === 'arm64') return /darwin.*arm64.*\.tar\.gz$/.test(value);
-    if (process.platform === 'darwin') return /darwin.*x64.*\.tar\.gz$/.test(value);
+    if (process.platform === 'darwin') return /darwin.*(x64|amd64).*\.tar\.gz$/.test(value);
     return false;
   };
 }
@@ -523,7 +574,7 @@ async function ensureGithubReleaseBinary(args: {
       `Expand-Archive -Path "${archivePath}" -DestinationPath "${extractDir}" -Force`,
     ]);
   } else if (String(asset.name).endsWith('.tar.gz') || String(asset.name).endsWith('.tgz')) {
-    await execFilePromise('tar', ['-xzf', archivePath, '-C', extractDir]);
+    await execFilePromise(process.platform === 'win32' ? 'tar.exe' : 'tar', ['-xzf', archivePath, '-C', extractDir]);
   } else {
     fs.copyFileSync(archivePath, path.join(extractDir, path.basename(target)));
   }
@@ -562,11 +613,10 @@ export async function ensureSemgrepBinary(): Promise<string> {
   const python = await resolvePythonCommand();
   if (!python) throw new Error('Python is required to auto-install semgrep.');
 
+  // ensure venv dir exists (idempotent)
   await execFilePromise(python, ['-m', 'venv', venvDir]);
 
-  const semgrepSpec = process.env.MERGESAFE_SEMGREP_VERSION
-    ? `semgrep==${process.env.MERGESAFE_SEMGREP_VERSION}`
-    : 'semgrep';
+  const semgrepSpec = process.env.MERGESAFE_SEMGREP_VERSION ? `semgrep==${process.env.MERGESAFE_SEMGREP_VERSION}` : 'semgrep';
 
   await venvPipInstall(venvDir, ['install', '--upgrade', 'pip', 'setuptools', 'wheel'], {
     maxBuffer: 20 * 1024 * 1024,
@@ -660,7 +710,7 @@ export class MergeSafeAdapter implements EngineAdapter {
         engineSeverity: entry.severity,
         message: entry.title,
         title: entry.title,
-        filePath: normalizePathForScan(ctx.scanPath, entry.filePath),
+        filePath: path.resolve(ctx.scanPath, entry.filePath),
         line: entry.line,
         evidence: ctx.config.redact ? '' : entry.evidence,
         confidence: entry.confidence,
@@ -668,6 +718,7 @@ export class MergeSafeAdapter implements EngineAdapter {
         remediation: entry.remediation,
         owaspMcpTop10: (entry as any).owaspMcpTop10,
         tags,
+        scanRoot: ctx.scanPath,
       });
     });
   }
@@ -771,9 +822,7 @@ export class SemgrepAdapter implements EngineAdapter {
     );
 
     if (!fs.existsSync(jsonPath)) {
-      throw new Error(
-        `Semgrep did not write results.json (exit=${runJson.code}). ${String(runJson.stderr || runJson.stdout).trim()}`
-      );
+      throw new Error(`Semgrep did not write results.json (exit=${runJson.code}). ${String(runJson.stderr || runJson.stdout).trim()}`);
     }
 
     const parsed = JSON.parse(fs.readFileSync(jsonPath, 'utf8')) as any;
@@ -813,6 +862,7 @@ export class SemgrepAdapter implements EngineAdapter {
         category: meta.category,
         owaspMcpTop10: meta.owasp,
         tags: meta.tags,
+        scanRoot: ctx.scanPath,
       });
     });
 
@@ -908,6 +958,7 @@ export class GitleaksAdapter implements EngineAdapter {
         remediation: 'Rotate exposed credentials and remove secrets from source history.',
         tags: ['secrets'],
         owaspMcpTop10: 'MCP-A02',
+        scanRoot: ctx.scanPath,
       })
     );
 
@@ -1080,6 +1131,7 @@ export class CiscoMcpAdapter implements EngineAdapter {
         line: Number(item.line ?? item.start_line ?? item.startLine ?? 1),
         evidence: ctx.config.redact ? '' : String(item.snippet ?? item.evidence ?? item.details ?? ''),
         tags: ['cisco'],
+        scanRoot: ctx.scanPath,
       })
     );
   }
@@ -1102,8 +1154,7 @@ export class CiscoMcpAdapter implements EngineAdapter {
         ? path.resolve(repoTools)
         : '';
 
-    const mode: CiscoMode =
-      explicitMode === 'auto' ? (resolvedToolsPath ? 'static' : 'known-configs') : explicitMode;
+    const mode: CiscoMode = explicitMode === 'auto' ? (resolvedToolsPath ? 'static' : 'known-configs') : explicitMode;
 
     const base = engineArtifactBase(ctx, this.engineId);
     const jsonPath = path.join(base, 'results.json');
@@ -1173,7 +1224,10 @@ export class CiscoMcpAdapter implements EngineAdapter {
         };
       }
 
-      const res = await runAndMaterializeOutput([...baseArgs, 'static', '--tools', resolvedToolsPath], 'Cisco static produced no output.');
+      const res = await runAndMaterializeOutput(
+        [...baseArgs, 'static', '--tools', resolvedToolsPath],
+        'Cisco static produced no output.'
+      );
       if (!res.ran) throw new Error(res.skipped || 'Cisco static produced no output.');
     } else if (mode === 'known-configs') {
       const attempt1 = await runAndMaterializeOutput(
@@ -1183,7 +1237,10 @@ export class CiscoMcpAdapter implements EngineAdapter {
       if (!attempt1.ran) {
         const combined = `${attempt1.stdout}\n${attempt1.stderr}`;
         if (isCiscoUnrecognizedArg(combined)) {
-          const attempt2 = await runAndMaterializeOutput([...baseArgs, 'known-configs'], 'No MCP client configs found in known locations.');
+          const attempt2 = await runAndMaterializeOutput(
+            [...baseArgs, 'known-configs'],
+            'No MCP client configs found in known locations.'
+          );
           if (!attempt2.ran) {
             return { findings: [], meta: { status: 'skipped', errorMessage: 'No MCP client configs found in known locations.' } };
           }
@@ -1199,14 +1256,20 @@ export class CiscoMcpAdapter implements EngineAdapter {
       if (!fs.existsSync(configPath)) {
         return { findings: [], meta: { status: 'skipped', errorMessage: `Cisco config mode: file not found at ${configPath}.` } };
       }
-      const res = await runAndMaterializeOutput([...baseArgs, 'config', '--config-path', configPath], 'Cisco config scan produced no output.');
+      const res = await runAndMaterializeOutput(
+        [...baseArgs, 'config', '--config-path', configPath],
+        'Cisco config scan produced no output.'
+      );
       if (!res.ran) throw new Error(res.skipped || 'Cisco config scan produced no output.');
     } else if (mode === 'remote') {
       const serverUrl = String(cfg.serverUrl || '').trim();
       if (!serverUrl) {
         return { findings: [], meta: { status: 'skipped', errorMessage: 'Cisco remote mode requires --cisco-server-url <url>.' } };
       }
-      const res = await runAndMaterializeOutput([...baseArgs, 'remote', '--server-url', serverUrl], 'Cisco remote scan produced no output.');
+      const res = await runAndMaterializeOutput(
+        [...baseArgs, 'remote', '--server-url', serverUrl],
+        'Cisco remote scan produced no output.'
+      );
       if (!res.ran) throw new Error(res.skipped || 'Cisco remote scan produced no output.');
     } else if (mode === 'stdio') {
       const cmd = String(cfg.stdioCommand || '').trim();
@@ -1322,6 +1385,7 @@ export class OsvScannerAdapter implements EngineAdapter {
         remediation: 'Update vulnerable dependency to a fixed version.',
         tags: ['dependencies'],
         owaspMcpTop10: 'MCP-A08',
+        scanRoot: ctx.scanPath,
       })
     );
 
