@@ -45,6 +45,7 @@ Default engines are `mergesafe,semgrep,gitleaks,cisco,osv`. Optional supported e
 - `--auto-install <true|false>` default `true`
 - `--no-auto-install` disable tool bootstrap
 - `--redact`
+- `--verify-downloads <off|warn|strict>` default `warn` in CLI (`strict` in GitHub Action)
 
 Windows smoke test:
 
@@ -57,6 +58,19 @@ Expected output files:
 - `mergesafe-test/summary.md`
 - `mergesafe-test/results.sarif`
 - `mergesafe-test/report.html`
+
+
+### Download verification and cache behavior
+
+- MergeSafe pins downloadable tool versions in `packages/engines/src/toolManifest.ts` and never uses `latest` URLs for binary downloads.
+- Cache root: `~/.mergesafe/tools` (or `MERGESAFE_TOOLS_DIR`).
+- Cache key layout: `<cache>/bin/<tool>/<version>/<binary>` (tool + pinned version + platform/arch specific artifact).
+- On each run, cached binaries are verified against the manifest checksum before execution (unless `--verify-downloads off`).
+- Re-download occurs when:
+  - expected cached binary is missing,
+  - pinned version path is missing,
+  - checksum verification fails (strict blocks execution; warn logs warning and continues).
+- Minimal eviction policy: manual cache clear by removing `~/.mergesafe/tools` (or your custom `MERGESAFE_TOOLS_DIR`).
 
 ## v0.1.0 engine behavior
 

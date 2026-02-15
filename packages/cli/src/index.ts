@@ -11,6 +11,7 @@ import {
   type PathMode,
   type CiscoMode,
   type CiscoConfig,
+  type VerifyDownloadsMode,
   normalizeFindingPaths,
   stableSortFindings,
   normalizePathForOutput,
@@ -91,6 +92,7 @@ export function getHelpText(target: ParsedArgs['helpTarget'] = 'general'): strin
     '  --redact                       Redact sensitive fields in output',
     '  --no-cisco                     Remove Cisco engine from selected engines',
     '  --path-mode <relative|absolute> Output path mode for findings (default: relative)',
+    '  --verify-downloads <off|warn|strict> Verify downloaded tool checksums (default: warn)',
   ].join('\n');
 
   const listEnginesText = [
@@ -253,6 +255,13 @@ function parseCiscoMode(raw: unknown, fallback: CiscoMode): CiscoMode {
   return allowed.includes(v as CiscoMode) ? (v as CiscoMode) : fallback;
 }
 
+
+function parseVerifyDownloadsMode(raw: unknown, fallback: VerifyDownloadsMode): VerifyDownloadsMode {
+  if (typeof raw !== 'string') return fallback;
+  const v = raw.trim().toLowerCase();
+  return v === 'off' || v === 'warn' || v === 'strict' ? (v as VerifyDownloadsMode) : fallback;
+}
+
 function parsePathMode(raw: unknown, fallback: PathMode): PathMode {
   if (typeof raw !== 'string') return fallback;
   const v = raw.trim().toLowerCase();
@@ -316,6 +325,7 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfig {
   };
 
   const pathMode = parsePathMode((opts['path-mode'] as any) ?? (cfg.pathMode as any), 'relative');
+  const verifyDownloads = parseVerifyDownloadsMode((opts['verify-downloads'] as any) ?? (cfg.verifyDownloads as any), 'warn');
 
   return {
     outDir: normalizeOutDir((opts['out-dir'] as string) ?? cfg.outDir),
@@ -332,6 +342,7 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfig {
 
     // PR4
     pathMode,
+    verifyDownloads,
 
     // Extra config consumed by adapters
     cisco: ciscoConfig,

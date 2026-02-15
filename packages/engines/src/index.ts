@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
   findingFingerprint,
@@ -15,8 +16,10 @@ import {
   type Severity,
   type CiscoConfig,
   type CiscoMode,
+  type VerifyDownloadsMode,
 } from '@mergesafe/core';
 import { runDeterministicRules } from '@mergesafe/rules';
+import { TOOL_MANIFEST, resolveToolArtifact, type ToolName } from './toolManifest.js';
 
 function execFilePromise(
   file: string,
@@ -96,6 +99,42 @@ function normalizeSeverity(input: string, fallback: Severity = 'medium'): Severi
 
 function quoteShellArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function getVerifyDownloadsMode(config?: CliConfig): VerifyDownloadsMode {
+  return (config?.verifyDownloads ?? 'warn') as VerifyDownloadsMode;
+}
+
+function sha256File(filePath: string): string {
+  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+function verificationError(tool: string, reason: string): Error {
+  return new Error(`[${tool}] download verification failed: ${reason}`);
+}
+
+function handleVerificationFailure(mode: VerifyDownloadsMode, tool: string, reason: string): boolean {
+  if (mode === 'off') return true;
+  if (mode === 'warn') {
+    console.warn(`[mergesafe] WARNING: ${tool} verification issue: ${reason}`);
+    return true;
+  }
+  throw verificationError(tool, reason);
+}
+
+export function verifyFileWithMode(args: {
+  mode: VerifyDownloadsMode;
+  tool: ToolName;
+  filePath: string;
+  expectedSha256?: string;
+}): boolean {
+  if (args.mode === 'off') return true;
+  if (!args.expectedSha256) return handleVerificationFailure(args.mode, args.tool, `missing checksum entry for ${path.basename(args.filePath)}`);
+  const actual = sha256File(args.filePath);
+  if (actual !== args.expectedSha256) {
+    return handleVerificationFailure(args.mode, args.tool, `checksum mismatch for ${path.basename(args.filePath)} (expected ${args.expectedSha256}, got ${actual})`);
+  }
+  return true;
 }
 
 export async function hasBinary(name: string): Promise<boolean> {
@@ -467,10 +506,6 @@ function ciscoExecutable(venvDir: string): string {
   return process.platform === 'win32' ? path.join(bin, 'mcp-scanner.exe') : path.join(bin, 'mcp-scanner');
 }
 
-function cachedBinary(tool: string, versionTag: string, exe: string): string {
-  return path.join(getToolsDir(), 'bin', tool, versionTag, exe);
-}
-
 function findFileRecursive(root: string, matcher: (name: string) => boolean): string | undefined {
   if (!fs.existsSync(root)) return undefined;
   const stack = [root];
@@ -495,12 +530,6 @@ function githubHeaders(): Record<string, string> {
   return headers;
 }
 
-async function fetchJson(url: string): Promise<any> {
-  const res = await fetch(url, { headers: githubHeaders() });
-  if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
-  return res.json();
-}
-
 async function downloadFile(url: string, dest: string): Promise<void> {
   const res = await fetch(url, { headers: githubHeaders() });
   if (!res.ok) throw new Error(`Failed download ${url}: ${res.status}`);
@@ -508,92 +537,70 @@ async function downloadFile(url: string, dest: string): Promise<void> {
   await fs.promises.writeFile(dest, Buffer.from(await res.arrayBuffer()));
 }
 
-function makeAssetMatcher(tool: 'gitleaks' | 'osv-scanner' | 'trivy') {
-  return (name: string): boolean => {
-    const value = name.toLowerCase();
-
-    // OSV-Scanner: Windows assets are commonly .zip (not .exe)
-    if (tool === 'osv-scanner') {
-      if (process.platform === 'win32') return /windows.*amd64.*(\.zip|\.exe)$/.test(value);
-      if (process.platform === 'linux') return /linux.*amd64.*(\.tar\.gz|\.tgz|\.zip)?$/.test(value);
-      if (process.platform === 'darwin' && process.arch === 'arm64') return /darwin.*arm64.*(\.tar\.gz|\.tgz|\.zip)?$/.test(value);
-      if (process.platform === 'darwin') return /darwin.*amd64.*(\.tar\.gz|\.tgz|\.zip)?$/.test(value);
-    }
-
-    // Trivy: known naming conventions
-    if (tool === 'trivy') {
-      if (process.platform === 'win32') return /windows.*64bit.*\.zip$/.test(value);
-      if (process.platform === 'linux') return /linux.*64bit.*\.tar\.gz$/.test(value);
-      if (process.platform === 'darwin' && process.arch === 'arm64') return /macos.*arm64.*\.tar\.gz$/.test(value);
-      if (process.platform === 'darwin') return /macos.*64bit.*\.tar\.gz$/.test(value);
-    }
-
-    // Default (gitleaks): typical x64 patterns
-    if (process.platform === 'win32') return /windows.*x64.*\.zip$/.test(value);
-    if (process.platform === 'linux') return /linux.*(x64|amd64).*\.tar\.gz$/.test(value);
-    if (process.platform === 'darwin' && process.arch === 'arm64') return /darwin.*arm64.*\.tar\.gz$/.test(value);
-    if (process.platform === 'darwin') return /darwin.*(x64|amd64).*\.tar\.gz$/.test(value);
-    return false;
-  };
+function cachedBinary(tool: ToolName, versionTag: string, exe: string): string {
+  return path.join(getToolsDir(), 'bin', tool, versionTag, exe);
 }
 
-async function ensureGithubReleaseBinary(args: {
-  tool: 'gitleaks' | 'osv-scanner' | 'trivy';
-  owner: string;
-  repo: string;
-  versionEnv: string;
-  defaultVersion: string;
-  executableName: string;
-}): Promise<string> {
-  const versionTag = process.env[args.versionEnv] || args.defaultVersion;
-  const exe = process.platform === 'win32' ? `${args.executableName}.exe` : args.executableName;
-  const target = cachedBinary(args.tool, versionTag, exe);
-  if (fs.existsSync(target)) return target;
+export function existingBinary(tool: ToolName, verifyMode: VerifyDownloadsMode): string | undefined {
+  const manifest = TOOL_MANIFEST[tool];
+  const artifact = resolveToolArtifact(tool);
+  if (!artifact) return undefined;
+  const target = cachedBinary(tool, manifest.version, artifact.binaryName);
+  if (!fs.existsSync(target)) return undefined;
+  verifyFileWithMode({ mode: verifyMode, tool, filePath: target, expectedSha256: artifact.sha256 });
+  return target;
+}
 
-  const releaseUrl =
-    versionTag === 'latest'
-      ? `https://api.github.com/repos/${args.owner}/${args.repo}/releases/latest`
-      : `https://api.github.com/repos/${args.owner}/${args.repo}/releases/tags/${versionTag}`;
+export async function ensureManifestBinary(tool: ToolName, verifyMode: VerifyDownloadsMode): Promise<string> {
+  const manifest = TOOL_MANIFEST[tool];
+  const artifact = resolveToolArtifact(tool);
+  if (!artifact) throw new Error(`No ${tool} artifact configured for ${process.platform}/${process.arch}`);
 
-  const release = await fetchJson(releaseUrl);
-  const asset = (release.assets ?? []).find((entry: any) => makeAssetMatcher(args.tool)(String(entry.name ?? '')));
-  if (!asset?.browser_download_url) {
-    throw new Error(`No ${args.tool} release asset found for ${process.platform}/${process.arch}`);
+  const target = cachedBinary(tool, manifest.version, artifact.binaryName);
+  if (fs.existsSync(target)) {
+    verifyFileWithMode({ mode: verifyMode, tool, filePath: target, expectedSha256: artifact.sha256 });
+    return target;
   }
 
-  const baseDir = path.join(getToolsDir(), 'downloads', args.tool, versionTag);
-  const archivePath = path.join(baseDir, String(asset.name));
+  const baseDir = path.join(getToolsDir(), 'downloads', tool, manifest.version);
+  const archiveName = path.basename(new URL(artifact.url).pathname);
+  const archivePath = path.join(baseDir, archiveName || `${tool}-${manifest.version}`);
   const extractDir = path.join(baseDir, 'extract');
-  if (!fs.existsSync(archivePath)) await downloadFile(String(asset.browser_download_url), archivePath);
+
+  if (!fs.existsSync(archivePath)) {
+    await downloadFile(artifact.url, archivePath);
+  }
+  verifyFileWithMode({ mode: verifyMode, tool, filePath: archivePath, expectedSha256: artifact.sha256 });
+
+  fs.rmSync(extractDir, { recursive: true, force: true });
   fs.mkdirSync(extractDir, { recursive: true });
 
-  if (String(asset.name).endsWith('.zip')) {
-    await execFilePromise('powershell.exe', [
-      '-NoProfile',
-      '-Command',
-      `Expand-Archive -Path "${archivePath}" -DestinationPath "${extractDir}" -Force`,
-    ]);
-  } else if (String(asset.name).endsWith('.tar.gz') || String(asset.name).endsWith('.tgz')) {
+  if (artifact.archiveType === 'zip') {
+    if (process.platform === 'win32') {
+      await execFilePromise('powershell.exe', [
+        '-NoProfile',
+        '-Command',
+        `Expand-Archive -Path "${archivePath}" -DestinationPath "${extractDir}" -Force`,
+      ]);
+    } else {
+      await execFilePromise('unzip', ['-o', archivePath, '-d', extractDir]);
+    }
+  } else if (artifact.archiveType === 'tar.gz') {
     await execFilePromise(process.platform === 'win32' ? 'tar.exe' : 'tar', ['-xzf', archivePath, '-C', extractDir]);
   } else {
-    fs.copyFileSync(archivePath, path.join(extractDir, path.basename(target)));
+    fs.copyFileSync(archivePath, path.join(extractDir, artifact.binaryName));
   }
 
-  const discovered = findFileRecursive(extractDir, (name) => name.toLowerCase() === exe.toLowerCase());
-  if (!discovered) throw new Error(`Downloaded ${args.tool} archive did not contain expected binary ${exe}`);
+  const discovered = findFileRecursive(extractDir, (name) => name.toLowerCase() === artifact.binaryName.toLowerCase());
+  if (!discovered) throw new Error(`Downloaded ${tool} archive did not contain expected binary ${artifact.binaryName}`);
 
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.copyFileSync(discovered, target);
   if (process.platform !== 'win32') fs.chmodSync(target, 0o755);
-  updateToolsManifest(args.tool, versionTag, target);
-  return target;
-}
 
-function existingBinary(tool: string, versionEnv: string, defaultVersion: string, executableName: string): string | undefined {
-  const versionTag = process.env[versionEnv] || defaultVersion;
-  const exe = process.platform === 'win32' ? `${executableName}.exe` : executableName;
-  const binary = cachedBinary(tool, versionTag, exe);
-  return fs.existsSync(binary) ? binary : undefined;
+  verifyFileWithMode({ mode: verifyMode, tool, filePath: target, expectedSha256: artifact.sha256 });
+  updateToolsManifest(tool, manifest.version, target);
+  return target;
 }
 
 function resolvePythonCommand(): Promise<string | undefined> {
@@ -605,7 +612,7 @@ function resolvePythonCommand(): Promise<string | undefined> {
   })();
 }
 
-export async function ensureSemgrepBinary(): Promise<string> {
+export async function ensureSemgrepBinary(verifyMode: VerifyDownloadsMode): Promise<string> {
   const venvDir = path.join(getToolsDir(), 'venvs', 'semgrep');
   const existing = semgrepExecutable(venvDir);
   if (fs.existsSync(existing)) return existing;
@@ -613,21 +620,29 @@ export async function ensureSemgrepBinary(): Promise<string> {
   const python = await resolvePythonCommand();
   if (!python) throw new Error('Python is required to auto-install semgrep.');
 
-  // ensure venv dir exists (idempotent)
   await execFilePromise(python, ['-m', 'venv', venvDir]);
 
-  const semgrepSpec = process.env.MERGESAFE_SEMGREP_VERSION ? `semgrep==${process.env.MERGESAFE_SEMGREP_VERSION}` : 'semgrep';
+  const manifest = TOOL_MANIFEST.semgrep;
+  const artifact = resolveToolArtifact('semgrep');
+  if (!artifact) throw new Error(`No semgrep artifact configured for ${process.platform}/${process.arch}`);
+
+  const wheelDir = path.join(getToolsDir(), 'downloads', 'semgrep', manifest.version);
+  const wheelPath = path.join(wheelDir, path.basename(new URL(artifact.url).pathname));
+  if (!fs.existsSync(wheelPath)) {
+    await downloadFile(artifact.url, wheelPath);
+  }
+  verifyFileWithMode({ mode: verifyMode, tool: 'semgrep', filePath: wheelPath, expectedSha256: artifact.sha256 });
 
   await venvPipInstall(venvDir, ['install', '--upgrade', 'pip', 'setuptools', 'wheel'], {
     maxBuffer: 20 * 1024 * 1024,
   });
-  await venvPipInstall(venvDir, ['install', '--upgrade', semgrepSpec], { maxBuffer: 40 * 1024 * 1024 });
+  await venvPipInstall(venvDir, ['install', '--upgrade', wheelPath], { maxBuffer: 40 * 1024 * 1024 });
 
   const bin = semgrepExecutable(venvDir);
   if (!fs.existsSync(bin)) throw new Error('Semgrep install completed but executable was not found in venv.');
   if (process.platform !== 'win32') fs.chmodSync(bin, 0o755);
 
-  updateToolsManifest('semgrep', process.env.MERGESAFE_SEMGREP_VERSION || 'latest', bin);
+  updateToolsManifest('semgrep', manifest.version, bin);
   return bin;
 }
 
@@ -647,8 +662,7 @@ async function ensureCiscoBinary(): Promise<string> {
   await execFilePromise(python, ['-m', 'venv', venvDir]);
 
   const pkgBase = 'cisco-ai-mcp-scanner';
-  const v = process.env.MERGESAFE_CISCO_VERSION;
-  const pkgSpec = v && v !== 'latest' ? `${pkgBase}==${v}` : pkgBase;
+  const pkgSpec = process.env.MERGESAFE_CISCO_VERSION ? `${pkgBase}==${process.env.MERGESAFE_CISCO_VERSION}` : pkgBase;
 
   await venvPipInstall(venvDir, ['install', '--upgrade', 'pip', 'setuptools', 'wheel'], {
     maxBuffer: 20 * 1024 * 1024,
@@ -659,7 +673,7 @@ async function ensureCiscoBinary(): Promise<string> {
   if (!fs.existsSync(bin)) throw new Error('Cisco mcp-scanner install completed but executable was not found in venv.');
   if (process.platform !== 'win32') fs.chmodSync(bin, 0o755);
 
-  updateToolsManifest('cisco', process.env.MERGESAFE_CISCO_VERSION || 'latest', bin);
+  updateToolsManifest('cisco', process.env.MERGESAFE_CISCO_VERSION || 'unpinned', bin);
   return bin;
 }
 
@@ -770,17 +784,17 @@ export class SemgrepAdapter implements EngineAdapter {
   installHint = 'Auto-install semgrep into MergeSafe tools cache or install semgrep manually.';
   private resolvedBinary?: string;
 
-  private async resolveBinary() {
+  private async resolveBinary(ctx?: EngineContext) {
     if (this.resolvedBinary && fs.existsSync(this.resolvedBinary)) return this.resolvedBinary;
     this.resolvedBinary =
-      existingBinary('semgrep', 'MERGESAFE_SEMGREP_VERSION', 'latest', 'semgrep') ||
+      existingBinary('semgrep', getVerifyDownloadsMode(ctx?.config)) ||
       (await resolvePathBinary('semgrep')) ||
       semgrepExecutable(path.join(getToolsDir(), 'venvs', 'semgrep'));
     return this.resolvedBinary && fs.existsSync(this.resolvedBinary) ? this.resolvedBinary : undefined;
   }
 
-  async ensureAvailable() {
-    this.resolvedBinary = await ensureSemgrepBinary();
+  async ensureAvailable(ctx: EngineContext) {
+    this.resolvedBinary = await ensureSemgrepBinary(getVerifyDownloadsMode(ctx.config));
   }
 
   async version() {
@@ -790,12 +804,12 @@ export class SemgrepAdapter implements EngineAdapter {
     return stdout.trim() || 'unknown';
   }
 
-  async isAvailable() {
-    return Boolean(await this.resolveBinary());
+  async isAvailable(ctx: EngineContext) {
+    return Boolean(await this.resolveBinary(ctx));
   }
 
   async run(ctx: EngineContext): Promise<EngineRunResult> {
-    const bin = await this.resolveBinary();
+    const bin = await this.resolveBinary(ctx);
     if (!bin) throw new Error(`Not installed. ${this.installHint}`);
 
     const here = path.dirname(fileURLToPath(import.meta.url));
@@ -879,23 +893,16 @@ export class GitleaksAdapter implements EngineAdapter {
   installHint = 'Auto-install gitleaks into MergeSafe tools cache or install gitleaks manually.';
   private resolvedBinary?: string;
 
-  private async resolveBinary() {
+  private async resolveBinary(ctx?: EngineContext) {
     if (this.resolvedBinary && fs.existsSync(this.resolvedBinary)) return this.resolvedBinary;
     this.resolvedBinary =
-      existingBinary('gitleaks', 'MERGESAFE_GITLEAKS_VERSION', 'latest', 'gitleaks') ||
+      existingBinary('gitleaks', getVerifyDownloadsMode(ctx?.config)) ||
       (await resolvePathBinary('gitleaks'));
     return this.resolvedBinary;
   }
 
-  async ensureAvailable() {
-    this.resolvedBinary = await ensureGithubReleaseBinary({
-      tool: 'gitleaks',
-      owner: 'gitleaks',
-      repo: 'gitleaks',
-      versionEnv: 'MERGESAFE_GITLEAKS_VERSION',
-      defaultVersion: 'latest',
-      executableName: 'gitleaks',
-    });
+  async ensureAvailable(ctx: EngineContext) {
+    this.resolvedBinary = await ensureManifestBinary('gitleaks', getVerifyDownloadsMode(ctx.config));
   }
 
   async version() {
@@ -905,12 +912,12 @@ export class GitleaksAdapter implements EngineAdapter {
     return stdout.trim() || 'unknown';
   }
 
-  async isAvailable() {
-    return Boolean(await this.resolveBinary());
+  async isAvailable(ctx: EngineContext) {
+    return Boolean(await this.resolveBinary(ctx));
   }
 
   async run(ctx: EngineContext): Promise<EngineRunResult> {
-    const bin = await this.resolveBinary();
+    const bin = await this.resolveBinary(ctx);
     if (!bin) throw new Error(`Not installed. ${this.installHint}`);
 
     const base = engineArtifactBase(ctx, this.engineId);
@@ -1072,7 +1079,7 @@ export class CiscoMcpAdapter implements EngineAdapter {
   installHint = 'Auto-install cisco-ai-mcp-scanner into MergeSafe tools cache or install it manually (CLI: mcp-scanner).';
   private resolvedBinary?: string;
 
-  private async resolveBinary() {
+  private async resolveBinary(ctx?: EngineContext) {
     if (this.resolvedBinary && fs.existsSync(this.resolvedBinary)) return this.resolvedBinary;
     this.resolvedBinary = ciscoExecutable(path.join(getToolsDir(), 'venvs', 'cisco-mcp-scanner'));
     if (!fs.existsSync(this.resolvedBinary)) this.resolvedBinary = await resolvePathBinary('mcp-scanner');
@@ -1089,8 +1096,8 @@ export class CiscoMcpAdapter implements EngineAdapter {
     return 'unknown';
   }
 
-  async isAvailable() {
-    return Boolean(await this.resolveBinary());
+  async isAvailable(ctx: EngineContext) {
+    return Boolean(await this.resolveBinary(ctx));
   }
 
   private buildBaseArgs(cfg: CiscoConfig, jsonPath: string): string[] {
@@ -1137,7 +1144,7 @@ export class CiscoMcpAdapter implements EngineAdapter {
   }
 
   async run(ctx: EngineContext): Promise<EngineRunResult> {
-    const bin = await this.resolveBinary();
+    const bin = await this.resolveBinary(ctx);
     if (!bin) throw new Error(`Not installed. ${this.installHint}`);
 
     const cfg = getCiscoConfig(ctx);
@@ -1320,23 +1327,16 @@ export class OsvScannerAdapter implements EngineAdapter {
   installHint = 'Auto-install osv-scanner into MergeSafe tools cache or install osv-scanner manually.';
   private resolvedBinary?: string;
 
-  private async resolveBinary() {
+  private async resolveBinary(ctx?: EngineContext) {
     if (this.resolvedBinary && fs.existsSync(this.resolvedBinary)) return this.resolvedBinary;
     this.resolvedBinary =
-      existingBinary('osv-scanner', 'MERGESAFE_OSV_VERSION', 'latest', 'osv-scanner') ||
+      existingBinary('osv-scanner', getVerifyDownloadsMode(ctx?.config)) ||
       (await resolvePathBinary('osv-scanner'));
     return this.resolvedBinary;
   }
 
-  async ensureAvailable() {
-    this.resolvedBinary = await ensureGithubReleaseBinary({
-      tool: 'osv-scanner',
-      owner: 'google',
-      repo: 'osv-scanner',
-      versionEnv: 'MERGESAFE_OSV_VERSION',
-      defaultVersion: 'latest',
-      executableName: 'osv-scanner',
-    });
+  async ensureAvailable(ctx: EngineContext) {
+    this.resolvedBinary = await ensureManifestBinary('osv-scanner', getVerifyDownloadsMode(ctx.config));
   }
 
   async version() {
@@ -1346,12 +1346,12 @@ export class OsvScannerAdapter implements EngineAdapter {
     return stdout.trim() || 'unknown';
   }
 
-  async isAvailable() {
-    return Boolean(await this.resolveBinary());
+  async isAvailable(ctx: EngineContext) {
+    return Boolean(await this.resolveBinary(ctx));
   }
 
   async run(ctx: EngineContext): Promise<EngineRunResult> {
-    const bin = await this.resolveBinary();
+    const bin = await this.resolveBinary(ctx);
     if (!bin) throw new Error(`Not installed. ${this.installHint}`);
 
     const base = engineArtifactBase(ctx, this.engineId);
@@ -1399,23 +1399,16 @@ export class TrivyAdapter implements EngineAdapter {
   installHint = 'Auto-install trivy into MergeSafe tools cache or install trivy manually.';
   private resolvedBinary?: string;
 
-  private async resolveBinary() {
+  private async resolveBinary(ctx?: EngineContext) {
     if (this.resolvedBinary && fs.existsSync(this.resolvedBinary)) return this.resolvedBinary;
     this.resolvedBinary =
-      existingBinary('trivy', 'MERGESAFE_TRIVY_VERSION', 'latest', 'trivy') ||
+      existingBinary('trivy', getVerifyDownloadsMode(ctx?.config)) ||
       (await resolvePathBinary('trivy'));
     return this.resolvedBinary;
   }
 
-  async ensureAvailable() {
-    this.resolvedBinary = await ensureGithubReleaseBinary({
-      tool: 'trivy',
-      owner: 'aquasecurity',
-      repo: 'trivy',
-      versionEnv: 'MERGESAFE_TRIVY_VERSION',
-      defaultVersion: 'latest',
-      executableName: 'trivy',
-    });
+  async ensureAvailable(ctx: EngineContext) {
+    this.resolvedBinary = await ensureManifestBinary('trivy', getVerifyDownloadsMode(ctx.config));
   }
 
   async version() {
@@ -1425,12 +1418,12 @@ export class TrivyAdapter implements EngineAdapter {
     return stdout.split('\n')[0]?.trim() || 'unknown';
   }
 
-  async isAvailable() {
-    return Boolean(await this.resolveBinary());
+  async isAvailable(ctx: EngineContext) {
+    return Boolean(await this.resolveBinary(ctx));
   }
 
   async run(ctx: EngineContext): Promise<EngineRunResult> {
-    const bin = await this.resolveBinary();
+    const bin = await this.resolveBinary(ctx);
     if (!bin) throw new Error(`Not installed. ${this.installHint}`);
 
     const base = engineArtifactBase(ctx, this.engineId);
@@ -1488,8 +1481,25 @@ export async function runEngines(
       if (!adapter) break;
 
       const start = Date.now();
-      let version = await adapter.version();
-      let available = await adapter.isAvailable(ctx);
+      let version = 'unknown';
+      let available = false;
+
+      try {
+        version = await adapter.version();
+        available = await adapter.isAvailable(ctx);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error ?? '');
+        meta.push({
+          engineId: adapter.engineId,
+          displayName: adapter.displayName,
+          version,
+          status: 'failed',
+          durationMs: Date.now() - start,
+          installHint: adapter.installHint,
+          errorMessage: `Preflight failed: ${msg}`,
+        });
+        continue;
+      }
 
       if (!available && ctx.config.autoInstall && adapter.ensureAvailable) {
         try {
