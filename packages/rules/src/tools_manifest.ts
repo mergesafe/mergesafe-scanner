@@ -321,6 +321,7 @@ function mkManifestFinding(args: {
   owasp?: string;
 }): RawFinding {
   const pattern = args.toolName ? new RegExp(escapeRegExp(args.toolName), "i") : /./;
+  const findingLine = lineOf(args.content, pattern);
   return {
     ruleId: args.ruleId,
     title: args.title,
@@ -329,8 +330,14 @@ function mkManifestFinding(args: {
     category: args.category ?? "mcp-security",
     owaspMcpTop10: args.owasp ?? "MCP-A05",
     filePath: args.filePath,
-    line: lineOf(args.content, pattern),
+    line: findingLine,
     evidence: args.evidence,
+    evidencePayload: {
+      ruleId: args.ruleId,
+      matchType: "manifest",
+      matchSummary: args.evidence.slice(0, 160),
+      locations: [{ filePath: args.filePath, line: findingLine }],
+    },
     remediation: args.remediation,
     references: ["https://owasp.org"],
     tags: args.tags,

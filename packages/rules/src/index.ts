@@ -39,6 +39,20 @@ interface FileInfo {
   absPath: string;
   content: string;
   lines: string[];
+  sizeBytes: number;
+}
+
+export type DeterministicSkipReason = "ignored" | "symlink" | "too_large" | "unsupported_ext" | "read_error";
+
+export interface DeterministicScanStats {
+  filesConsidered: number;
+  filesScanned: number;
+  filesSkipped: number;
+  skipReasons: Record<DeterministicSkipReason, number>;
+}
+
+interface CollectOptions {
+  maxFileBytes: number;
 }
 
 const FILE_EXTS = [
@@ -60,12 +74,15 @@ const JS_EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
  * Directory ignore policy (performance + noise).
  * Keep this conservative: skip the obvious huge / generated folders.
  */
+const DEFAULT_MAX_FILE_BYTES = 1024 * 1024;
+
 const IGNORE_DIR_NAMES = new Set([
   "node_modules",
   ".git",
   "dist",
   "build",
   "out",
+  "mergesafe",
   ".next",
   "coverage",
   ".cache",
@@ -77,6 +94,7 @@ const IGNORE_DIR_NAMES = new Set([
   "venv",
   "__pycache__",
   ".pytest_cache",
+  ".idea",
 ]);
 
 /**
@@ -116,7 +134,7 @@ function isToolsManifestFile(stablePosixPath: string): boolean {
 }
 
 function shouldSkipDir(dirPath: string): boolean {
-  const base = path.basename(dirPath);
+  const base = path.basename(dirPath).toLowerCase();
   if (IGNORE_DIR_NAMES.has(base)) return true;
 
   if (base.startsWith(".") && base !== "." && base !== "..") {
@@ -125,6 +143,31 @@ function shouldSkipDir(dirPath: string): boolean {
   }
 
   return false;
+}
+
+function shouldIgnoreFile(absPath: string): boolean {
+  const base = path.basename(absPath).toLowerCase();
+  return base === ".ds_store" || base === "thumbs.db";
+}
+
+function initStats(): DeterministicScanStats {
+  return {
+    filesConsidered: 0,
+    filesScanned: 0,
+    filesSkipped: 0,
+    skipReasons: {
+      ignored: 0,
+      symlink: 0,
+      too_large: 0,
+      unsupported_ext: 0,
+      read_error: 0,
+    },
+  };
+}
+
+function recordSkip(stats: DeterministicScanStats, reason: DeterministicSkipReason): void {
+  stats.filesSkipped += 1;
+  stats.skipReasons[reason] += 1;
 }
 
 function readTextSafe(p: string): string {
@@ -160,29 +203,39 @@ function normalizeFindingFilePath(filePath: string, targetAbs: string): string {
   return toPosix(rel);
 }
 
-function collectFiles(targetAbsInput: string): FileInfo[] {
+function collectFiles(targetAbsInput: string, options: CollectOptions): { files: FileInfo[]; stats: DeterministicScanStats } {
   const out: FileInfo[] = [];
   const targetAbs = safeRealpath(path.resolve(targetAbsInput));
+  const stats = initStats();
 
   const walk = (absPath: string) => {
-    let st: fs.Stats;
+    let lst: fs.Stats;
     try {
-      st = fs.statSync(absPath);
+      lst = fs.lstatSync(absPath);
     } catch {
+      recordSkip(stats, "read_error");
       return;
     }
 
-    if (st.isDirectory()) {
-      if (shouldSkipDir(absPath)) return;
+    if (lst.isSymbolicLink()) {
+      recordSkip(stats, "symlink");
+      return;
+    }
+
+    if (lst.isDirectory()) {
+      if (shouldSkipDir(absPath)) {
+        recordSkip(stats, "ignored");
+        return;
+      }
 
       let children: string[] = [];
       try {
         children = fs.readdirSync(absPath);
       } catch {
+        recordSkip(stats, "read_error");
         return;
       }
 
-      // ✅ Deterministic traversal across OS/filesystems
       children.sort(asciiCompare);
 
       for (const child of children) {
@@ -191,12 +244,32 @@ function collectFiles(targetAbsInput: string): FileInfo[] {
       return;
     }
 
+    if (!lst.isFile()) return;
+
+    stats.filesConsidered += 1;
+
+    if (shouldIgnoreFile(absPath)) {
+      recordSkip(stats, "ignored");
+      return;
+    }
+
     const ext = path.extname(absPath).toLowerCase();
-    if (!FILE_EXTS.includes(ext)) return;
+    if (!FILE_EXTS.includes(ext)) {
+      recordSkip(stats, "unsupported_ext");
+      return;
+    }
+
+    if (lst.size > options.maxFileBytes) {
+      recordSkip(stats, "too_large");
+      return;
+    }
 
     const content = readTextSafe(absPath);
+    if (!content && lst.size > 0) {
+      recordSkip(stats, "read_error");
+      return;
+    }
 
-    // Stable relative path for findings (POSIX)
     let rel = path.relative(targetAbs, absPath);
     if (!rel) rel = path.basename(absPath);
     rel = rel.replace(/^[.][\\/]/, "");
@@ -206,14 +279,23 @@ function collectFiles(targetAbsInput: string): FileInfo[] {
       absPath,
       content,
       lines: content.split(/\r?\n/),
+      sizeBytes: lst.size,
     });
+    stats.filesScanned += 1;
   };
 
   walk(targetAbs);
 
-  // ✅ Deterministic file order
   out.sort((a, b) => stableCompare(a.filePath, b.filePath));
-  return out;
+
+  const skipReasons = Object.fromEntries(
+    Object.entries(stats.skipReasons).sort(([a], [b]) => asciiCompare(a, b))
+  ) as DeterministicScanStats["skipReasons"];
+
+  return {
+    files: out,
+    stats: { ...stats, skipReasons },
+  };
 }
 
 function lineOf(content: string, pattern: RegExp): number {
@@ -238,8 +320,10 @@ function mk(
   remediation: string,
   tags: string[],
   category = "mcp-security",
-  owasp = "MCP-A05"
+  owasp = "MCP-A05",
+  matchType: "regex" | "heuristic" = "regex"
 ): RawFinding {
+  const findingLine = lineOf(file.content, pattern);
   return {
     ruleId,
     title,
@@ -248,8 +332,14 @@ function mk(
     category,
     owaspMcpTop10: owasp,
     filePath: file.filePath,
-    line: lineOf(file.content, pattern),
+    line: findingLine,
     evidence,
+    evidencePayload: {
+      ruleId,
+      matchType,
+      matchedSnippet: evidence.slice(0, 160),
+      locations: [{ filePath: file.filePath, line: findingLine }],
+    },
     remediation,
     references: ["https://owasp.org"],
     tags,
@@ -266,8 +356,10 @@ function mkLoc(
   remediation: string,
   tags: string[],
   category = "mcp-security",
-  owasp = "MCP-A05"
+  owasp = "MCP-A05",
+  matchSummary?: string
 ): RawFinding {
+  const findingLine = Math.max(1, line || 1);
   return {
     ruleId,
     title,
@@ -276,8 +368,15 @@ function mkLoc(
     category,
     owaspMcpTop10: owasp,
     filePath: file.filePath,
-    line: Math.max(1, line || 1),
+    line: findingLine,
     evidence,
+    evidencePayload: {
+      ruleId,
+      matchType: "taint",
+      matchedSnippet: evidence.slice(0, 160),
+      ...(matchSummary ? { matchSummary } : {}),
+      locations: [{ filePath: file.filePath, line: findingLine }],
+    },
     remediation,
     references: ["https://owasp.org"],
     tags,
@@ -359,9 +458,11 @@ function dedupeKeyForFinding(f: RawFinding): string {
 
 export function runDeterministicRules(
   targetPath: string,
-  mode: "fast" | "deep" = "fast"
-): { findings: RawFinding[]; tools: ToolSurface[] } {
+  mode: "fast" | "deep" = "fast",
+  options?: { maxFileBytes?: number }
+ ): { findings: RawFinding[]; tools: ToolSurface[]; scanStats: DeterministicScanStats } {
   const targetAbs = safeRealpath(path.resolve(targetPath));
+  const maxFileBytes = Math.max(1, Number(options?.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES));
 
   if (DEBUG_FINGERPRINT) {
     dbg("start", {
@@ -371,10 +472,11 @@ export function runDeterministicRules(
       targetPath,
       targetAbs,
       mode,
+      maxFileBytes,
     });
   }
 
-  const files = collectFiles(targetAbs);
+  const { files, stats: scanStats } = collectFiles(targetAbs, { maxFileBytes });
 
   if (DEBUG_FINGERPRINT) {
     dbg("files", {
@@ -394,6 +496,23 @@ export function runDeterministicRules(
       ...f,
       filePath: normalizeFindingFilePath(f.filePath, targetAbs),
       line: Math.max(1, Number(f.line || 1)),
+      ...(f.evidencePayload
+        ? {
+            evidencePayload: {
+              ...f.evidencePayload,
+              ruleId: f.ruleId,
+              ...(f.evidencePayload.locations
+                ? {
+                    locations: f.evidencePayload.locations.map((loc) => ({
+                      ...loc,
+                      filePath: normalizeFindingFilePath(loc.filePath, targetAbs),
+                      line: Math.max(1, Number(loc.line || 1)),
+                    })),
+                  }
+                : {}),
+            },
+          }
+        : {}),
     };
 
     const key = dedupeKeyForFinding(normalized);
@@ -459,7 +578,8 @@ export function runDeterministicRules(
           "Require explicit authorization/gating hints.",
           ["destructive", "gating"],
           "tooling",
-          "MCP-A01"
+          "MCP-A01",
+          "heuristic"
         )
       );
     }
@@ -481,7 +601,8 @@ export function runDeterministicRules(
               "Avoid shell execution; never pass request-derived data into process execution. Prefer allowlists, safe APIs, and strict input validation.",
               ["exec", "taint"],
               "injection",
-              "MCP-A03"
+              "MCP-A03",
+              `source=user_input -> sink=${tf.sink}`
             )
           );
         } else if (tf.ruleId === "MS003") {
@@ -498,7 +619,8 @@ export function runDeterministicRules(
               "Use path normalization and allowlisted directories. Never write to arbitrary paths derived from requests or user input.",
               ["fs-write", "path-traversal", "taint"],
               "filesystem",
-              "MCP-A04"
+              "MCP-A04",
+              `source=user_input -> sink=${tf.sink}`
             )
           );
         }
@@ -543,7 +665,8 @@ export function runDeterministicRules(
             "Use path normalization and allowlisted directories. Never write to arbitrary paths from requests.",
             ["fs-write", "path-traversal"],
             "filesystem",
-            "MCP-A04"
+            "MCP-A04",
+            "heuristic"
           )
         );
       }
@@ -566,7 +689,8 @@ export function runDeterministicRules(
           "Enforce explicit egress allowlist.",
           ["net-egress"],
           "network",
-          "MCP-A06"
+          "MCP-A06",
+          "heuristic"
         )
       );
     }
@@ -584,7 +708,8 @@ export function runDeterministicRules(
           "Redact secrets before logging.",
           ["secrets"],
           "secrets",
-          "MCP-A02"
+          "MCP-A02",
+          "heuristic"
         )
       );
     }
@@ -602,7 +727,8 @@ export function runDeterministicRules(
           "Use least-privilege OAuth scopes.",
           ["oauth"],
           "authz",
-          "MCP-A07"
+          "MCP-A07",
+          "heuristic"
         )
       );
     }
@@ -624,7 +750,8 @@ export function runDeterministicRules(
           "Add auth middleware to MCP endpoints.",
           ["auth"],
           "authn",
-          "MCP-A01"
+          "MCP-A01",
+          "heuristic"
         )
       );
     }
@@ -642,7 +769,8 @@ export function runDeterministicRules(
           "Disable debug and tighten allow-lists.",
           ["defaults"],
           "hardening",
-          "MCP-A08"
+          "MCP-A08",
+          "heuristic"
         )
       );
     }
@@ -660,7 +788,8 @@ export function runDeterministicRules(
           "Align tool metadata with actual capabilities.",
           ["tool-metadata"],
           "integrity",
-          "MCP-A09"
+          "MCP-A09",
+          "heuristic"
         )
       );
     }
@@ -678,7 +807,8 @@ export function runDeterministicRules(
           "Disallow dynamic tool registration from untrusted data.",
           ["dynamic-tools"],
           "integrity",
-          "MCP-A10"
+          "MCP-A10",
+          "heuristic"
         )
       );
     }
@@ -696,7 +826,8 @@ export function runDeterministicRules(
           "Remove dynamic execution primitives.",
           ["exec", "deep"],
           "injection",
-          "MCP-A03"
+          "MCP-A03",
+          "heuristic"
         )
       );
     }
@@ -725,5 +856,5 @@ export function runDeterministicRules(
     dbg("done", { findings: findings.length, tools: tools.length });
   }
 
-  return { findings, tools };
+  return { findings, tools, scanStats };
 }

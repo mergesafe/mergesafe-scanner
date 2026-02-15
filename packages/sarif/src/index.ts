@@ -208,6 +208,19 @@ function findingToSarifResultMerged(finding: Finding, redact: boolean): SarifRes
     ? [...new Set(finding.tags.map((t) => String(t ?? '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b))
     : [];
 
+  const evidenceRaw = finding.evidence
+    ? {
+        ...(finding.evidence.ruleId ? { ruleId: finding.evidence.ruleId } : {}),
+        ...(finding.evidence.matchType ? { matchType: finding.evidence.matchType } : {}),
+        ...(finding.evidence.matchSummary ? { matchSummary: finding.evidence.matchSummary } : {}),
+        ...(finding.evidence.matchedSnippet ? { matchedSnippet: finding.evidence.matchedSnippet } : {}),
+        ...(Array.isArray(finding.evidence.locations) && finding.evidence.locations.length
+          ? { locations: finding.evidence.locations }
+          : {}),
+      }
+    : undefined;
+  const evidence = evidenceRaw && Object.keys(evidenceRaw).length > 0 ? evidenceRaw : undefined;
+
   const props = {
     mergesafe: {
       findingId: finding.findingId,
@@ -219,6 +232,7 @@ function findingToSarifResultMerged(finding: Finding, redact: boolean): SarifRes
       tags,
       multiEngineConfirmed: multi,
       engineSources: sources,
+      ...(evidence ? { evidence } : {}),
     },
   };
 

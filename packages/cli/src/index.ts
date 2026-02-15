@@ -97,6 +97,7 @@ export function getHelpText(target: ParsedArgs['helpTarget'] = 'general'): strin
     '  --no-cisco                     Remove Cisco engine from selected engines',
     '  --path-mode <relative|absolute> Output path mode for findings (default: relative)',
     '  --verify-downloads <off|warn|strict> Verify downloaded tool checksums (default: warn)',
+    '  --max-file-bytes <number>      Max file size for deterministic rules scan (default: 1048576)',
   ].join('\n');
 
   const listEnginesText = [
@@ -358,6 +359,7 @@ export function resolveConfig(opts: Record<string, OptValue>): CliConfig {
     // PR4
     pathMode,
     verifyDownloads,
+    maxFileBytes: Math.max(1, Number((opts['max-file-bytes'] as string) ?? cfg.maxFileBytes ?? 1024 * 1024)),
 
     // Extra config consumed by adapters
     cisco: ciscoConfig,

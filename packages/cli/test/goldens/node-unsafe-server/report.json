@@ -1,7 +1,7 @@
 {
   "meta": {
     "scannedPath": "fixtures/node-unsafe-server",
-    "generatedAt": "2026-02-15T00:57:07.672Z",
+    "generatedAt": "2026-02-15T04:46:44.940Z",
     "mode": "fast",
     "timeout": 30,
     "concurrency": 4,
@@ -12,7 +12,7 @@
         "displayName": "MergeSafe deterministic rules",
         "version": "builtin",
         "status": "ok",
-        "durationMs": 38,
+        "durationMs": 34,
         "installHint": "Built in - no install required."
       }
     ]
@@ -61,7 +61,17 @@
       ],
       "evidence": {
         "excerpt": "exec(req.query.cmd);",
-        "note": "Merged evidence (best available excerpt)"
+        "note": "Merged evidence (best available excerpt)",
+        "ruleId": "MS002",
+        "matchType": "taint",
+        "matchSummary": "source=user_input -> sink=exec",
+        "matchedSnippet": "exec(req.query.cmd);",
+        "locations": [
+          {
+            "filePath": "server.js",
+            "line": 14
+          }
+        ]
       },
       "remediation": "Avoid shell execution; never pass request-derived data into process execution. Prefer allowlists, safe APIs, and strict input validation.",
       "references": [],
@@ -94,7 +104,16 @@
       ],
       "evidence": {
         "excerpt": "exec_system_command: Runs an arbitrary system command on the host machine. Intended for advanced admin automation. WARNING: can execute any shell command. | schema props=[command, cwd, timeoutMs] required=[command]",
-        "note": "Merged evidence (best available excerpt)"
+        "note": "Merged evidence (best available excerpt)",
+        "ruleId": "MS012",
+        "matchType": "manifest",
+        "matchSummary": "exec_system_command: Runs an arbitrary system command on the host machine. Intended for advanced admin automation. WARNING: can execute any shell command. | sch",
+        "locations": [
+          {
+            "filePath": "tools-list.json",
+            "line": 4
+          }
+        ]
       },
       "remediation": "Do not expose arbitrary command execution tools to untrusted callers. Remove shell execution, enforce strict allowlists, require strong auth + approvals, and sandbox execution.",
       "references": [],
@@ -128,7 +147,16 @@
       ],
       "evidence": {
         "excerpt": "Dynamic tool registration from user input detected",
-        "note": "Merged evidence (best available excerpt)"
+        "note": "Merged evidence (best available excerpt)",
+        "ruleId": "MS010",
+        "matchType": "heuristic",
+        "matchedSnippet": "Dynamic tool registration from user input detected",
+        "locations": [
+          {
+            "filePath": "server.js",
+            "line": 20
+          }
+        ]
       },
       "remediation": "Disallow dynamic tool registration from untrusted data.",
       "references": [],
@@ -160,7 +188,16 @@
       ],
       "evidence": {
         "excerpt": "destructive pattern",
-        "note": "Merged evidence (best available excerpt)"
+        "note": "Merged evidence (best available excerpt)",
+        "ruleId": "MS001",
+        "matchType": "heuristic",
+        "matchedSnippet": "destructive pattern",
+        "locations": [
+          {
+            "filePath": "server.js",
+            "line": 8
+          }
+        ]
       },
       "remediation": "Require explicit authorization/gating hints.",
       "references": [],
@@ -194,7 +231,16 @@
       ],
       "evidence": {
         "excerpt": "Endpoint appears unauthenticated",
-        "note": "Merged evidence (best available excerpt)"
+        "note": "Merged evidence (best available excerpt)",
+        "ruleId": "MS007",
+        "matchType": "heuristic",
+        "matchedSnippet": "Endpoint appears unauthenticated",
+        "locations": [
+          {
+            "filePath": "server.js",
+            "line": 12
+          }
+        ]
       },
       "remediation": "Add auth middleware to MCP endpoints.",
       "references": [],
@@ -226,7 +272,16 @@
       ],
       "evidence": {
         "excerpt": "exec_system_command: Runs an arbitrary system command on the host machine. Intended for advanced admin automation. WARNING: can execute any shell command. | schema props=[command, cwd, timeoutMs] required=[command]",
-        "note": "Merged evidence (best available excerpt)"
+        "note": "Merged evidence (best available excerpt)",
+        "ruleId": "MS016",
+        "matchType": "manifest",
+        "matchSummary": "exec_system_command: Runs an arbitrary system command on the host machine. Intended for advanced admin automation. WARNING: can execute any shell command. | sch",
+        "locations": [
+          {
+            "filePath": "tools-list.json",
+            "line": 4
+          }
+        ]
       },
       "remediation": "Add explicit gating: authentication, authorization scopes, approvals/confirmations, and allowlists. Document constraints in tool metadata and enforce them in code.",
       "references": [],
@@ -261,7 +316,16 @@
       ],
       "evidence": {
         "excerpt": "read_any_file: Reads the contents of any local file path provided by the user (no allowlist). Useful for debugging and support. | schema props=[path, maxBytes] required=[path]",
-        "note": "Merged evidence (best available excerpt)"
+        "note": "Merged evidence (best available excerpt)",
+        "ruleId": "MS016",
+        "matchType": "manifest",
+        "matchSummary": "read_any_file: Reads the contents of any local file path provided by the user (no allowlist). Useful for debugging and support. | schema props=[path, maxBytes] ",
+        "locations": [
+          {
+            "filePath": "tools-list.json",
+            "line": 18
+          }
+        ]
       },
       "remediation": "Add explicit gating: authentication, authorization scopes, approvals/confirmations, and allowlists. Document constraints in tool metadata and enforce them in code.",
       "references": [],
@@ -296,7 +360,16 @@
       ],
       "evidence": {
         "excerpt": "http_fetch: Fetches any URL and returns the response body. Supports internal hosts and arbitrary headers. Can be used to call internal services. | schema props=[url, method, headers] required=[url]",
-        "note": "Merged evidence (best available excerpt)"
+        "note": "Merged evidence (best available excerpt)",
+        "ruleId": "MS016",
+        "matchType": "manifest",
+        "matchSummary": "http_fetch: Fetches any URL and returns the response body. Supports internal hosts and arbitrary headers. Can be used to call internal services. | schema props=",
+        "locations": [
+          {
+            "filePath": "tools-list.json",
+            "line": 31
+          }
+        ]
       },
       "remediation": "Add explicit gating: authentication, authorization scopes, approvals/confirmations, and allowlists. Document constraints in tool metadata and enforce them in code.",
       "references": [],
@@ -331,7 +404,17 @@
       ],
       "evidence": {
         "excerpt": "fs.writeFileSync(req.query.path, req.body.data);",
-        "note": "Merged evidence (best available excerpt)"
+        "note": "Merged evidence (best available excerpt)",
+        "ruleId": "MS003",
+        "matchType": "taint",
+        "matchSummary": "source=user_input -> sink=fs.writeFileSync",
+        "matchedSnippet": "fs.writeFileSync(req.query.path, req.body.data);",
+        "locations": [
+          {
+            "filePath": "server.js",
+            "line": 15
+          }
+        ]
       },
       "remediation": "Use path normalization and allowlisted directories. Never write to arbitrary paths derived from requests or user input.",
       "references": [],
@@ -365,7 +448,16 @@
       ],
       "evidence": {
         "excerpt": "read_any_file: Reads the contents of any local file path provided by the user (no allowlist). Useful for debugging and support. | schema props=[path, maxBytes] required=[path]",
-        "note": "Merged evidence (best available excerpt)"
+        "note": "Merged evidence (best available excerpt)",
+        "ruleId": "MS013",
+        "matchType": "manifest",
+        "matchSummary": "read_any_file: Reads the contents of any local file path provided by the user (no allowlist). Useful for debugging and support. | schema props=[path, maxBytes] ",
+        "locations": [
+          {
+            "filePath": "tools-list.json",
+            "line": 18
+          }
+        ]
       },
       "remediation": "Restrict reads to allowlisted directories. Normalize paths, block absolute paths and traversal, enforce auth, and audit access.",
       "references": [],
@@ -400,7 +492,16 @@
       ],
       "evidence": {
         "excerpt": "Outgoing network call in handler without allowlist",
-        "note": "Merged evidence (best available excerpt)"
+        "note": "Merged evidence (best available excerpt)",
+        "ruleId": "MS004",
+        "matchType": "heuristic",
+        "matchedSnippet": "Outgoing network call in handler without allowlist",
+        "locations": [
+          {
+            "filePath": "server.js",
+            "line": 16
+          }
+        ]
       },
       "remediation": "Enforce explicit egress allowlist.",
       "references": [],
@@ -433,7 +534,16 @@
       ],
       "evidence": {
         "excerpt": "http_fetch: Fetches any URL and returns the response body. Supports internal hosts and arbitrary headers. Can be used to call internal services. | schema props=[url, method, headers] required=[url]",
-        "note": "Merged evidence (best available excerpt)"
+        "note": "Merged evidence (best available excerpt)",
+        "ruleId": "MS014",
+        "matchType": "manifest",
+        "matchSummary": "http_fetch: Fetches any URL and returns the response body. Supports internal hosts and arbitrary headers. Can be used to call internal services. | schema props=",
+        "locations": [
+          {
+            "filePath": "tools-list.json",
+            "line": 31
+          }
+        ]
       },
       "remediation": "Enforce egress allowlists (hosts/schemes/ports). Block private/link-local ranges by default. Limit user-controlled headers. Require auth + approvals.",
       "references": [],
@@ -468,7 +578,16 @@
       ],
       "evidence": {
         "excerpt": "Sensitive value appears in logs",
-        "note": "Merged evidence (best available excerpt)"
+        "note": "Merged evidence (best available excerpt)",
+        "ruleId": "MS005",
+        "matchType": "heuristic",
+        "matchedSnippet": "Sensitive value appears in logs",
+        "locations": [
+          {
+            "filePath": "server.js",
+            "line": 13
+          }
+        ]
       },
       "remediation": "Redact secrets before logging.",
       "references": [],
@@ -500,7 +619,16 @@
       ],
       "evidence": {
         "excerpt": "log_debug_token: Debug helper that prints tokens/keys during troubleshooting. (Should never be enabled in production.) | schema props=[token] required=[token]",
-        "note": "Merged evidence (best available excerpt)"
+        "note": "Merged evidence (best available excerpt)",
+        "ruleId": "MS015",
+        "matchType": "manifest",
+        "matchSummary": "log_debug_token: Debug helper that prints tokens/keys during troubleshooting. (Should never be enabled in production.) | schema props=[token] required=[token]",
+        "locations": [
+          {
+            "filePath": "tools-list.json",
+            "line": 49
+          }
+        ]
       },
       "remediation": "Remove secret/token logging tools from production. If needed locally, gate behind build flags, redact outputs, and ensure secrets never reach logs.",
       "references": [],
@@ -535,7 +663,16 @@
       ],
       "evidence": {
         "excerpt": "Broad OAuth scope detected",
-        "note": "Merged evidence (best available excerpt)"
+        "note": "Merged evidence (best available excerpt)",
+        "ruleId": "MS006",
+        "matchType": "heuristic",
+        "matchedSnippet": "Broad OAuth scope detected",
+        "locations": [
+          {
+            "filePath": "server.js",
+            "line": 9
+          }
+        ]
       },
       "remediation": "Use least-privilege OAuth scopes.",
       "references": [],
@@ -567,7 +704,16 @@
       ],
       "evidence": {
         "excerpt": "Unsafe permissive defaults found",
-        "note": "Merged evidence (best available excerpt)"
+        "note": "Merged evidence (best available excerpt)",
+        "ruleId": "MS008",
+        "matchType": "heuristic",
+        "matchedSnippet": "Unsafe permissive defaults found",
+        "locations": [
+          {
+            "filePath": "server.js",
+            "line": 10
+          }
+        ]
       },
       "remediation": "Disable debug and tighten allow-lists.",
       "references": [],
@@ -599,7 +745,16 @@
       ],
       "evidence": {
         "excerpt": "Read-only claim conflicts with mutating capabilities",
-        "note": "Merged evidence (best available excerpt)"
+        "note": "Merged evidence (best available excerpt)",
+        "ruleId": "MS009",
+        "matchType": "heuristic",
+        "matchedSnippet": "Read-only claim conflicts with mutating capabilities",
+        "locations": [
+          {
+            "filePath": "server.js",
+            "line": 7
+          }
+        ]
       },
       "remediation": "Align tool metadata with actual capabilities.",
       "references": [],
