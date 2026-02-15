@@ -154,6 +154,7 @@ export interface CiscoConfig {
  * PR4: Path normalization policy for outputs
  */
 export type PathMode = 'relative' | 'absolute';
+export type VerifyDownloadsMode = 'off' | 'warn' | 'strict';
 
 export interface CliConfig {
   outDir: string;
@@ -164,6 +165,7 @@ export interface CliConfig {
   failOn: 'critical' | 'high' | 'none';
   redact: boolean;
   autoInstall: boolean;
+  verifyDownloads?: VerifyDownloadsMode;
   engines?: string[];
 
   /**

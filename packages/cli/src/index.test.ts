@@ -399,6 +399,12 @@ describe('option parsing utilities', () => {
     const config = resolveConfig({});
     expect(config.engines).toEqual([...DEFAULT_ENGINES]);
     expect(config.autoInstall).toBe(true);
+    expect(config.verifyDownloads).toBe('warn');
+  });
+
+  test('resolveConfig parses verify-downloads flag', () => {
+    const config = resolveConfig({ 'verify-downloads': 'strict' });
+    expect(config.verifyDownloads).toBe('strict');
   });
 
   test('parseListOpt accepts comma and whitespace-separated values', () => {
