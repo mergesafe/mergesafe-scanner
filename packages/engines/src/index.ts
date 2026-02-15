@@ -466,7 +466,20 @@ function normalizePathForScan(scanPath: string, p: string): string {
   return normalizePathForFinding(abs, scanPath);
 }
 
-export function getToolsDir(): string {
+export 
+function resolveSemgrepConfigPath(): string {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.resolve(here, '../semgrep-rules/entry.yml'),
+    path.resolve(here, './semgrep-rules/entry.yml'),
+  ];
+  for (const configPath of candidates) {
+    if (fs.existsSync(configPath)) return configPath;
+  }
+  throw new Error(`Semgrep config not found. Tried: ${candidates.join(', ')}`);
+}
+
+function getToolsDir(): string {
   const root = path.resolve(process.env.MERGESAFE_TOOLS_DIR || path.join(os.homedir(), '.mergesafe', 'tools'));
   fs.mkdirSync(root, { recursive: true });
   return root;
@@ -843,11 +856,7 @@ export class SemgrepAdapter implements EngineAdapter {
     const bin = await this.resolveBinary(ctx);
     if (!bin) throw new Error(`Not installed. ${this.installHint}`);
 
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const configPath = path.resolve(here, '../semgrep-rules/entry.yml');
-    if (!fs.existsSync(configPath)) {
-      throw new Error(`Semgrep config not found at ${configPath}. Did you create semgrep-rules/entry.yml ?`);
-    }
+    const configPath = resolveSemgrepConfigPath();
 
     const base = engineArtifactBase(ctx, this.engineId);
     const jsonPath = path.join(base, 'results.json');

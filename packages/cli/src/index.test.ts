@@ -198,21 +198,32 @@ function normalizeJsonForGolden(jsonText: string): string {
   return normalizeText(JSON.stringify(scrubbed, null, 2));
 }
 
+const baseSpawnOptions = {
+  cwd: repoRoot,
+  encoding: 'utf8' as const,
+  windowsHide: true,
+  timeout: 60_000,
+  env: { ...process.env },
+};
+
+function runPackageManager(command: 'pnpm' | 'npm', args: string[], cwd = repoRoot) {
+  if (process.platform === 'win32') {
+    return spawnSync(command, args, { ...baseSpawnOptions, cwd, shell: true });
+  }
+  return spawnSync(command, args, { ...baseSpawnOptions, cwd });
+}
+
+function runNodeScript(scriptPath: string, args: string[], cwd = repoRoot) {
+  return spawnSync(process.execPath, [scriptPath, ...args], { ...baseSpawnOptions, cwd });
+}
+
 const runCli = (args: string[]): CliResult => {
   const npmExecPath = process.env.npm_execpath;
   const hasExecPath = Boolean(npmExecPath && fs.existsSync(npmExecPath));
 
-  const opts = {
-    cwd: repoRoot,
-    encoding: 'utf8' as const,
-    windowsHide: true,
-    timeout: 30_000,
-    env: { ...process.env },
-  };
-
   const res = hasExecPath
-    ? spawnSync(process.execPath, [npmExecPath as string, '-C', 'packages/cli', 'dev', '--', ...args], opts)
-    : spawnSync(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['-C', 'packages/cli', 'dev', '--', ...args], opts);
+    ? runNodeScript(npmExecPath as string, ['-C', 'packages/cli', 'dev', '--', ...args])
+    : runPackageManager('pnpm', ['-C', 'packages/cli', 'dev', '--', ...args]);
 
   return {
     status: res.status,
@@ -225,6 +236,96 @@ const runCli = (args: string[]): CliResult => {
 
 beforeAll(() => {
   expect(fs.existsSync(fixtureAbs)).toBe(true);
+});
+
+
+describe('published CLI smoke', () => {
+  test('build output exists and bundled CLI runs in repo', () => {
+    const build = runPackageManager('pnpm', ['-C', 'packages/cli', 'build']);
+    if (build.error) throw build.error;
+    expect(build.status).toBe(0);
+
+    const distEntry = path.resolve(repoRoot, 'packages/cli/dist/index.js');
+    expect(fs.existsSync(distEntry)).toBe(true);
+    const distSource = fs.readFileSync(distEntry, 'utf8');
+    for (const workspaceImport of ['@mergesafe/core', '@mergesafe/engines', '@mergesafe/report', '@mergesafe/rules', '@mergesafe/sarif']) {
+      expect(distSource.includes(workspaceImport)).toBe(false);
+    }
+
+    const help = runNodeScript(distEntry, ['--help']);
+    if (help.error) throw help.error;
+    expect(help.status).toBe(0);
+
+    const outDir = mkTempOutDir('mergesafe-smoke-dist');
+    try {
+      const scan = runNodeScript(distEntry, ['scan', fixtureAbs, '--out-dir', outDir, '--format', 'json', '--fail-on', 'none']);
+      if (scan.error) throw scan.error;
+      expect(scan.status).toBe(0);
+
+      const jsonPath = [path.join(outDir, 'report.json'), path.join(outDir, 'results.json')].find((candidate) =>
+        fs.existsSync(candidate)
+      );
+      expect(jsonPath).toBeTruthy();
+      const report = JSON.parse(fs.readFileSync(jsonPath as string, 'utf8')) as { meta?: { engines?: Array<{ engineId?: string }> } };
+      const engineIds = new Set((report.meta?.engines ?? []).map((entry) => entry.engineId));
+      for (const expected of ['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv']) {
+        expect(engineIds.has(expected)).toBe(true);
+      }
+    } finally {
+      rmTempOutDir(outDir);
+    }
+  }, 20_000);
+
+  test('npm pack install smoke test executes installed bin via node', () => {
+    const cliDir = path.resolve(repoRoot, 'packages/cli');
+
+    const pack = runPackageManager('npm', ['pack'], cliDir);
+    if (pack.error) throw pack.error;
+    expect(pack.status).toBe(0);
+
+    const tarballName = String(pack.stdout).trim().split(/\r?\n/).filter(Boolean).at(-1);
+    expect(tarballName).toBeTruthy();
+    const tarballPath = path.resolve(cliDir, tarballName as string);
+
+    const tempProject = mkTempOutDir('mergesafe-pack-smoke');
+    const outDir = path.join(tempProject, 'out');
+    try {
+      const init = runPackageManager('npm', ['init', '-y'], tempProject);
+      if (init.error) throw init.error;
+      expect(init.status).toBe(0);
+
+      const install = runPackageManager('npm', ['install', tarballPath], tempProject);
+      if (install.error) throw install.error;
+      expect(install.status).toBe(0);
+
+      const installedPkgPath = path.join(tempProject, 'node_modules', 'mergesafe', 'package.json');
+      const installedPkg = JSON.parse(fs.readFileSync(installedPkgPath, 'utf8')) as { bin?: string | Record<string, string> };
+      const binRel =
+        typeof installedPkg.bin === 'string'
+          ? installedPkg.bin
+          : installedPkg.bin && typeof installedPkg.bin === 'object'
+            ? installedPkg.bin.mergesafe
+            : undefined;
+      expect(binRel).toBeTruthy();
+      const installedBin = path.resolve(path.dirname(installedPkgPath), binRel as string);
+
+      const help = runNodeScript(installedBin, ['--help'], tempProject);
+      if (help.error) throw help.error;
+      expect(help.status).toBe(0);
+
+      const scan = runNodeScript(installedBin, ['scan', fixtureAbs, '--out-dir', outDir, '--format', 'json', '--fail-on', 'none'], tempProject);
+      if (scan.error) throw scan.error;
+      expect(scan.status).toBe(0);
+
+      const jsonPath = [path.join(outDir, 'report.json'), path.join(outDir, 'results.json')].find((candidate) =>
+        fs.existsSync(candidate)
+      );
+      expect(jsonPath).toBeTruthy();
+    } finally {
+      if (tarballPath && fs.existsSync(tarballPath)) fs.rmSync(tarballPath, { force: true });
+      rmTempOutDir(tempProject);
+    }
+  }, 20_000);
 });
 
 describe('deterministic outputs goldens', () => {

@@ -8,6 +8,19 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "declaration": true,
-    "outDir": "dist"
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@mergesafe/core": ["packages/core/src/index.ts"],
+      "@mergesafe/core/*": ["packages/core/src/*"],
+      "@mergesafe/engines": ["packages/engines/src/index.ts"],
+      "@mergesafe/engines/*": ["packages/engines/src/*"],
+      "@mergesafe/report": ["packages/report/src/index.ts"],
+      "@mergesafe/report/*": ["packages/report/src/*"],
+      "@mergesafe/rules": ["packages/rules/src/index.ts"],
+      "@mergesafe/rules/*": ["packages/rules/src/*"],
+      "@mergesafe/sarif": ["packages/sarif/src/index.ts"],
+      "@mergesafe/sarif/*": ["packages/sarif/src/*"]
+    }
   }
 }

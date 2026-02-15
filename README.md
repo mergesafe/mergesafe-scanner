@@ -5,27 +5,28 @@ Offline-first deterministic scanner for MCP server codebases (local scan executi
 ## Quickstart
 
 ```bash
+npx mergesafe scan .
+```
+
+Or install globally:
+
+```bash
+npm i -g mergesafe
+mergesafe scan .
+```
+
+For local monorepo development:
+
+```bash
 pnpm install
 pnpm test
 pnpm -C packages/cli dev -- scan fixtures/node-unsafe-server
 ```
 
-Scan with all available engines:
-
-```bash
-pnpm -C packages/cli dev -- scan fixtures/node-unsafe-server --engines all
-```
-
-Scan with explicit fast mode:
-
-```bash
-pnpm -C packages/cli dev -- scan fixtures/node-unsafe-server --mode fast
-```
-
 Example with explicit outputs:
 
 ```bash
-pnpm -C packages/cli dev -- scan fixtures/node-unsafe-server --out-dir mergesafe-test --format json,sarif,md,html --fail-on none
+mergesafe scan fixtures/node-unsafe-server --out-dir mergesafe-test --format json,sarif,md,html --fail-on none
 ```
 
 Generated outputs:

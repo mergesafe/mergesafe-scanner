@@ -5,6 +5,25 @@ import type { Finding, ScanResult } from '@mergesafe/core';
 const severityRank: Record<Finding['severity'], number> = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
 const confidenceRank: Record<Finding['confidence'], number> = { high: 3, medium: 2, low: 1 };
 
+
+type GateSummary = {
+  status?: unknown;
+  failOn?: unknown;
+  reason?: unknown;
+};
+
+type ResultSummaryView = {
+  status?: unknown;
+  scanStatus?: unknown;
+  gate?: GateSummary;
+};
+
+function readResultSummary(result: ScanResult): ResultSummaryView {
+  const summary = result.summary as unknown;
+  if (!summary || typeof summary !== 'object') return {};
+  return summary as ResultSummaryView;
+}
+
 /**
  * PR4 determinism helpers (display-layer only)
  * - Always render with POSIX separators in MD/HTML
@@ -154,7 +173,8 @@ function formatScanStatus(status: string | undefined): string {
  * Extract "gate" object if present, else fall back.
  */
 function gateStatusFromResult(result: ScanResult): { status?: string; failOn?: string; reason?: string } {
-  const gate = (result.summary as any)?.gate;
+  const summary = readResultSummary(result);
+  const gate = summary.gate;
   if (gate && typeof gate === 'object') {
     return {
       status: gate.status != null ? String(gate.status) : undefined,
@@ -164,7 +184,7 @@ function gateStatusFromResult(result: ScanResult): { status?: string; failOn?: s
   }
 
   // Back-compat: older summary.status might have been PASS/FAIL
-  return { status: (result.summary as any)?.status != null ? String((result.summary as any)?.status) : undefined };
+  return { status: summary.status != null ? String(summary.status) : undefined };
 }
 
 /**
@@ -205,9 +225,10 @@ function formatPolicyGate(result: ScanResult): { label: string; detail?: string 
  * Markdown header block (summary.md)
  */
 function markdownStatusBlock(result: ScanResult): string {
-  const scanStatusRaw = String((result.summary as any)?.scanStatus ?? 'OK').toUpperCase();
+  const summary = readResultSummary(result);
+  const scanStatusRaw = String(summary.scanStatus ?? 'OK').toUpperCase();
   const scanStatus = formatScanStatus(scanStatusRaw);
-  const gateRaw = String(((result.summary as any)?.gate?.status ?? (result.summary as any)?.status ?? 'PASS')).toUpperCase();
+  const gateRaw = String((summary.gate?.status ?? summary.status ?? 'PASS')).toUpperCase();
   const gateStatus = gateRaw === 'FAIL' ? 'FAIL' : 'PASS';
   const gate = formatPolicyGate(result);
 
@@ -221,9 +242,10 @@ function markdownStatusBlock(result: ScanResult): string {
  * HTML header pills (report.html)
  */
 function htmlHeaderBadges(result: ScanResult): string {
-  const scanStatusRaw = String((result.summary as any)?.scanStatus ?? 'OK').toUpperCase();
+  const summary = readResultSummary(result);
+  const scanStatusRaw = String(summary.scanStatus ?? 'OK').toUpperCase();
   const scanLabel = formatScanStatus(scanStatusRaw);
-  const gateRaw = String(((result.summary as any)?.gate?.status ?? (result.summary as any)?.status ?? 'PASS')).toUpperCase();
+  const gateRaw = String((summary.gate?.status ?? summary.status ?? 'PASS')).toUpperCase();
   const gateStatus = gateRaw === 'FAIL' ? 'FAIL' : 'PASS';
   const gate = formatPolicyGate(result);
   const warning =
@@ -363,7 +385,7 @@ export function generateHtmlReport(result: ScanResult): string {
 
       const engineDetail = (f.engineSources ?? [])
         .slice()
-        .sort((a, b) => {
+        .sort((a: NonNullable<Finding['engineSources']>[number], b: NonNullable<Finding['engineSources']>[number]) => {
           const e = String(a.engineId).localeCompare(String(b.engineId));
           if (e !== 0) return e;
           const r = String(a.engineRuleId ?? '').localeCompare(String(b.engineRuleId ?? ''));
