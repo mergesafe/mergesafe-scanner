@@ -79,35 +79,33 @@ Options:
 
 ## Docs claim hits
 
-- docs/workflows/mergesafe.yml:25 — mode: fast
-- packages/action/action.yml:2 — description: 'Run MergeSafe scanner with default engines (mergesafe, semgrep, gitleaks, cisco, osv) or a custom engines list'
+- docs/workflows/mergesafe.yml:25 — mode: standard
+- packages/action/action.yml:2 — description: 'Run MergeSafe scanner locally in the workflow runner with default engines (mergesafe, semgrep, gitleaks, cisco, osv) or a custom engines list. Missing tools may be downloaded when auto-install is enabled.'
 - packages/action/action.yml:9 — description: 'Scan mode (standard or fast)'
 - packages/action/action.yml:11 — default: 'standard'
 - packages/action/action.yml:86 — --fail-on "${{ inputs.fail_on }}" \
 - packages/action/action.yml:89 — --verify-downloads "${{ inputs.verify_downloads }}" \
-- README.md:3 — Offline-first deterministic scanner for MCP server codebases (local scan execution by default).
 - README.md:29 — mergesafe scan fixtures/node-unsafe-server --out-dir mergesafe-test --format json,sarif,md,html --fail-on none
 - README.md:38 — Default engines are `mergesafe,semgrep,gitleaks,cisco,osv`. Optional supported engines (for example `trivy`) are **not** included unless you pass them via `--engines`. Missing engine binaries are auto-installed by default into `${HOME}/.mergesafe/tools` (override with `MERGESAFE_TOOLS_DIR`). Auto-install may download tools unless disabled with `--no-auto-install` or `--auto-install false`.
 - README.md:52 — - `--mode standard|fast` default `standard`
 - README.md:55 — - `--fail-on critical|high|none` default `high`
-- README.md:58 — - `--auto-install <true|false>` default `true`
-- README.md:59 — - `--no-auto-install` disable tool bootstrap
-- README.md:61 — - `--verify-downloads <off|warn|strict>` default `warn` in CLI (`strict` in GitHub Action)
-- README.md:62 — - `--fail-on-scan-status <none|partial|failed|any>` default `none` (separate scan completeness enforcement)
-- README.md:70 — - `gateStatus`: `PASS | FAIL` (did findings violate `--fail-on` policy?)
-- README.md:78 — Backward-compatible default behavior is unchanged because `--fail-on-scan-status` defaults to `none`.
-- README.md:86 — | Scan-status enforcement triggered by `--fail-on-scan-status` | `3` |
-- README.md:92 — - `--fail-on high`, findings include high severity, and scan is PARTIAL → exit `2`.
-- README.md:93 — - `--fail-on none --fail-on-scan-status partial`, scan is PARTIAL → exit `3`.
-- README.md:94 — - `--fail-on none --fail-on-scan-status failed`, scan is PARTIAL → exit `0`.
-- README.md:99 — pnpm -C packages/cli dev -- scan fixtures/node-unsafe-server --out-dir mergesafe-test --fail-on none
-- README.md:114 — - On each run, cached binaries are verified against the manifest checksum before execution (unless `--verify-downloads off`).
-- README.md:125 — - If `--no-auto-install` is set, missing engines are marked as `skipped` with install hints in `report.json`.
-- README.md:128 — ## Tool cache + offline-first defaults
-- README.md:132 — - MergeSafe is offline-first: code is scanned locally and not uploaded by default, but tool bootstrap may download engine binaries unless auto-install is disabled.
+- README.md:56 — - `--fail-on-scan-status <none|partial|failed|any>` default `none` (separate scan completeness enforcement)
+- README.md:59 — - `--auto-install <true|false>` default `true`
+- README.md:60 — - `--no-auto-install` disable tool bootstrap
+- README.md:62 — - `--verify-downloads <off|warn|strict>` default `warn` in CLI (`strict` in GitHub Action)
+- README.md:70 — mode: standard
+- README.md:97 — - `gateStatus`: `PASS | FAIL` (did findings violate `--fail-on` policy?)
+- README.md:105 — Backward-compatible default behavior is unchanged because `--fail-on-scan-status` defaults to `none`.
+- README.md:113 — | Scan-status enforcement triggered by `--fail-on-scan-status` | `3` |
+- README.md:119 — - `--fail-on high`, findings include high severity, and scan is PARTIAL → exit `2`.
+- README.md:120 — - `--fail-on none --fail-on-scan-status partial`, scan is PARTIAL → exit `3`.
+- README.md:121 — - `--fail-on none --fail-on-scan-status failed`, scan is PARTIAL → exit `0`.
+- README.md:126 — pnpm -C packages/cli dev -- scan fixtures/node-unsafe-server --out-dir mergesafe-test --fail-on none
+- README.md:141 — - On each run, cached binaries are verified against the manifest checksum before execution (unless `--verify-downloads off`).
+- README.md:152 — - If `--no-auto-install` is set, missing engines are marked as `skipped` with install hints in `report.json`.
+- README.md:159 — - Code is scanned locally and not uploaded by default, but tool bootstrap may download engine binaries unless auto-install is disabled.
 
 ## Potential mismatches (heuristic)
 
-- offline-claim-vs-auto-install-default: Offline/air-gapped claims found while CLI default for --auto-install is true (may download missing tools).
 - fast-default-claim: A claim suggests fast is default, but CLI help reports mode default as standard.
 

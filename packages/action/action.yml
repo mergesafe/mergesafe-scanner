@@ -1,5 +1,5 @@
 name: 'MergeSafe Scanner'
-description: 'Run MergeSafe scanner with default engines (mergesafe, semgrep, gitleaks, cisco, osv) or a custom engines list'
+description: 'Run MergeSafe scanner locally in the workflow runner with default engines (mergesafe, semgrep, gitleaks, cisco, osv) or a custom engines list. Missing tools may be downloaded when auto-install is enabled.'
 inputs:
   path:
     description: 'Path to scan (relative to repo root)'

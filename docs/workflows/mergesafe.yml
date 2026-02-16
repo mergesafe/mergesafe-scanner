@@ -22,7 +22,7 @@ jobs:
         uses: mergesafe/mergesafe-scanner/packages/action@main
         with:
           path: .
-          mode: fast
+          mode: standard
           fail_on: high
           # engines: mergesafe,semgrep,gitleaks,cisco,osv
           # fail_on: none

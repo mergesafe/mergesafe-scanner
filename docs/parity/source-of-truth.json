@@ -51,16 +51,17 @@
     {
       "path": "docs/workflows/mergesafe.yml",
       "line": 25,
-      "text": "mode: fast",
+      "text": "mode: standard",
       "matched": [
-        "fast"
+        "standard"
       ]
     },
     {
       "path": "packages/action/action.yml",
       "line": 2,
-      "text": "description: 'Run MergeSafe scanner with default engines (mergesafe, semgrep, gitleaks, cisco, osv) or a custom engines list'",
+      "text": "description: 'Run MergeSafe scanner locally in the workflow runner with default engines (mergesafe, semgrep, gitleaks, cisco, osv) or a custom engines list. Missing tools may be downloaded when auto-install is enabled.'",
       "matched": [
+        "auto-install",
         "default engines"
       ]
     },
@@ -99,15 +100,6 @@
     },
     {
       "path": "README.md",
-      "line": 3,
-      "text": "Offline-first deterministic scanner for MCP server codebases (local scan execution by default).",
-      "matched": [
-        "offline",
-        "offline-first"
-      ]
-    },
-    {
-      "path": "README.md",
       "line": 29,
       "text": "mergesafe scan fixtures/node-unsafe-server --out-dir mergesafe-test --format json,sarif,md,html --fail-on none",
       "matched": [
@@ -142,31 +134,7 @@
     },
     {
       "path": "README.md",
-      "line": 58,
-      "text": "- `--auto-install <true|false>` default `true`",
-      "matched": [
-        "auto-install"
-      ]
-    },
-    {
-      "path": "README.md",
-      "line": 59,
-      "text": "- `--no-auto-install` disable tool bootstrap",
-      "matched": [
-        "auto-install"
-      ]
-    },
-    {
-      "path": "README.md",
-      "line": 61,
-      "text": "- `--verify-downloads <off|warn|strict>` default `warn` in CLI (`strict` in GitHub Action)",
-      "matched": [
-        "verify-downloads"
-      ]
-    },
-    {
-      "path": "README.md",
-      "line": 62,
+      "line": 56,
       "text": "- `--fail-on-scan-status <none|partial|failed|any>` default `none` (separate scan completeness enforcement)",
       "matched": [
         "fail-on"
@@ -174,7 +142,39 @@
     },
     {
       "path": "README.md",
+      "line": 59,
+      "text": "- `--auto-install <true|false>` default `true`",
+      "matched": [
+        "auto-install"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 60,
+      "text": "- `--no-auto-install` disable tool bootstrap",
+      "matched": [
+        "auto-install"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 62,
+      "text": "- `--verify-downloads <off|warn|strict>` default `warn` in CLI (`strict` in GitHub Action)",
+      "matched": [
+        "verify-downloads"
+      ]
+    },
+    {
+      "path": "README.md",
       "line": 70,
+      "text": "mode: standard",
+      "matched": [
+        "standard"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 97,
       "text": "- `gateStatus`: `PASS | FAIL` (did findings violate `--fail-on` policy?)",
       "matched": [
         "fail-on"
@@ -182,7 +182,7 @@
     },
     {
       "path": "README.md",
-      "line": 78,
+      "line": 105,
       "text": "Backward-compatible default behavior is unchanged because `--fail-on-scan-status` defaults to `none`.",
       "matched": [
         "fail-on"
@@ -190,7 +190,7 @@
     },
     {
       "path": "README.md",
-      "line": 86,
+      "line": 113,
       "text": "| Scan-status enforcement triggered by `--fail-on-scan-status` | `3` |",
       "matched": [
         "fail-on"
@@ -198,7 +198,7 @@
     },
     {
       "path": "README.md",
-      "line": 92,
+      "line": 119,
       "text": "- `--fail-on high`, findings include high severity, and scan is PARTIAL → exit `2`.",
       "matched": [
         "fail-on"
@@ -206,7 +206,7 @@
     },
     {
       "path": "README.md",
-      "line": 93,
+      "line": 120,
       "text": "- `--fail-on none --fail-on-scan-status partial`, scan is PARTIAL → exit `3`.",
       "matched": [
         "fail-on"
@@ -214,7 +214,7 @@
     },
     {
       "path": "README.md",
-      "line": 94,
+      "line": 121,
       "text": "- `--fail-on none --fail-on-scan-status failed`, scan is PARTIAL → exit `0`.",
       "matched": [
         "fail-on"
@@ -222,7 +222,7 @@
     },
     {
       "path": "README.md",
-      "line": 99,
+      "line": 126,
       "text": "pnpm -C packages/cli dev -- scan fixtures/node-unsafe-server --out-dir mergesafe-test --fail-on none",
       "matched": [
         "fail-on"
@@ -230,7 +230,7 @@
     },
     {
       "path": "README.md",
-      "line": 114,
+      "line": 141,
       "text": "- On each run, cached binaries are verified against the manifest checksum before execution (unless `--verify-downloads off`).",
       "matched": [
         "verify-downloads"
@@ -238,7 +238,7 @@
     },
     {
       "path": "README.md",
-      "line": 125,
+      "line": 152,
       "text": "- If `--no-auto-install` is set, missing engines are marked as `skipped` with install hints in `report.json`.",
       "matched": [
         "auto-install"
@@ -246,29 +246,14 @@
     },
     {
       "path": "README.md",
-      "line": 128,
-      "text": "## Tool cache + offline-first defaults",
+      "line": 159,
+      "text": "- Code is scanned locally and not uploaded by default, but tool bootstrap may download engine binaries unless auto-install is disabled.",
       "matched": [
-        "offline",
-        "offline-first"
-      ]
-    },
-    {
-      "path": "README.md",
-      "line": 132,
-      "text": "- MergeSafe is offline-first: code is scanned locally and not uploaded by default, but tool bootstrap may download engine binaries unless auto-install is disabled.",
-      "matched": [
-        "auto-install",
-        "offline",
-        "offline-first"
+        "auto-install"
       ]
     }
   ],
   "potentialMismatches": [
-    {
-      "type": "offline-claim-vs-auto-install-default",
-      "note": "Offline/air-gapped claims found while CLI default for --auto-install is true (may download missing tools)."
-    },
     {
       "type": "fast-default-claim",
       "note": "A claim suggests fast is default, but CLI help reports mode default as standard."
