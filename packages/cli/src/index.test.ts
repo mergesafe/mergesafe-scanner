@@ -297,6 +297,10 @@ describe('published CLI smoke', () => {
 
       const outDir = mkTempOutDir('mergesafe-smoke-dist');
       try {
+        // IMPORTANT:
+        // - Smoke test should be fast and deterministic in CI.
+        // - Do NOT change product defaults (those are asserted elsewhere).
+        // - Here, we explicitly opt into a minimal scan: mergesafe-only, no downloads, fast mode.
         const scan = runNodeScript(distEntry, [
           'scan',
           fixtureAbs,
@@ -306,6 +310,11 @@ describe('published CLI smoke', () => {
           'json',
           '--fail-on',
           'none',
+          '--engines',
+          'mergesafe',
+          '--no-auto-install',
+          '--mode',
+          'fast',
         ]);
         if (scan.error) throw scan.error;
         expect(scan.status).toBe(0);
@@ -314,13 +323,19 @@ describe('published CLI smoke', () => {
           fs.existsSync(candidate)
         );
         expect(jsonPath).toBeTruthy();
+
         const report = JSON.parse(fs.readFileSync(jsonPath as string, 'utf8')) as {
           meta?: { engines?: Array<{ engineId?: string }> };
         };
         const engineIds = new Set((report.meta?.engines ?? []).map((entry) => entry.engineId));
-        for (const expected of ['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv']) {
-          expect(engineIds.has(expected)).toBe(true);
-        }
+
+        // We requested mergesafe-only explicitly for smoke stability.
+        expect(engineIds.has('mergesafe')).toBe(true);
+        // Guard against accidental default multi-engine execution inside the smoke test.
+        expect(engineIds.has('semgrep')).toBe(false);
+        expect(engineIds.has('gitleaks')).toBe(false);
+        expect(engineIds.has('cisco')).toBe(false);
+        expect(engineIds.has('osv')).toBe(false);
       } finally {
         rmTempOutDir(outDir);
       }
@@ -349,12 +364,18 @@ describe('published CLI smoke', () => {
         expect(init.status).toBe(0);
 
         // Speed + stability flags; avoids audit/fund network work, prefers local cache.
-        const install = runPackageManager('npm', ['install', '--no-audit', '--no-fund', '--prefer-offline', tarballPath], tempProject);
+        const install = runPackageManager(
+          'npm',
+          ['install', '--no-audit', '--no-fund', '--prefer-offline', tarballPath],
+          tempProject
+        );
         if (install.error) throw install.error;
         expect(install.status).toBe(0);
 
         const installedPkgPath = path.join(tempProject, 'node_modules', 'mergesafe', 'package.json');
-        const installedPkg = JSON.parse(fs.readFileSync(installedPkgPath, 'utf8')) as { bin?: string | Record<string, string> };
+        const installedPkg = JSON.parse(fs.readFileSync(installedPkgPath, 'utf8')) as {
+          bin?: string | Record<string, string>;
+        };
         const binRel =
           typeof installedPkg.bin === 'string'
             ? installedPkg.bin
@@ -368,9 +389,24 @@ describe('published CLI smoke', () => {
         if (help.error) throw help.error;
         expect(help.status).toBe(0);
 
+        // Same rationale as dist smoke: keep this fast + deterministic.
         const scan = runNodeScript(
           installedBin,
-          ['scan', fixtureAbs, '--out-dir', outDir, '--format', 'json', '--fail-on', 'none'],
+          [
+            'scan',
+            fixtureAbs,
+            '--out-dir',
+            outDir,
+            '--format',
+            'json',
+            '--fail-on',
+            'none',
+            '--engines',
+            'mergesafe',
+            '--no-auto-install',
+            '--mode',
+            'fast',
+          ],
           tempProject
         );
         if (scan.error) throw scan.error;
