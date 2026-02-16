@@ -1,0 +1,277 @@
+{
+  "cliHelp": {
+    "general": "MergeSafe CLI\n\nUsage:\n  mergesafe scan <path> [options]\n  mergesafe --list-engines\n  mergesafe --help\n\nCommands:\n  scan             Scan a project path and write outputs\n  --list-engines   List available engines and versions\n\nRun `mergesafe scan --help` for scan options.",
+    "scan": "MergeSafe scan\n\nUsage:\n  mergesafe scan <path> [options]\n\nOptions:\n  --out-dir <dir>                Output directory (default: mergesafe)\n  --format <csv>                 Output formats (default: json,html,sarif,md)\n  --mode <standard|fast>         Scan mode (default: standard)\n  --timeout <seconds>            Per-engine timeout seconds (default: 30)\n  --concurrency <n>              Engine concurrency (default: 4)\n  --fail-on <critical|high|none> Fail threshold (default: high)\n  --fail-on-scan-status <none|partial|failed|any> Fail on incomplete scan status (default: none)\n  --config <path>                Optional YAML config path\n  --engines <list|all>           Comma/space-separated engines list or all available engines\n  --auto-install <true|false>    Auto-install missing tools (default: true)\n  --no-auto-install              Disable tool auto-install\n  --redact                       Redact sensitive fields in output\n  --no-cisco                     Remove Cisco engine from selected engines\n  --path-mode <relative|absolute> Output path mode for findings (default: relative)\n  --verify-downloads <off|warn|strict> Verify downloaded tool checksums (default: warn)\n  --max-file-bytes <number>      Max file size for deterministic rules scan (default: 1048576)"
+  },
+  "cliDefaults": {
+    "out-dir": "mergesafe",
+    "format": "json,html,sarif,md",
+    "mode": "standard",
+    "timeout": "30",
+    "concurrency": "4",
+    "fail-on": "high",
+    "fail-on-scan-status": "none",
+    "auto-install": "true",
+    "path-mode": "relative",
+    "verify-downloads": "warn",
+    "max-file-bytes": "1048576",
+    "default-engines": [
+      "mergesafe",
+      "semgrep",
+      "gitleaks",
+      "cisco",
+      "osv"
+    ]
+  },
+  "engineConstants": {
+    "DEFAULT_ENGINES": [
+      "mergesafe",
+      "semgrep",
+      "gitleaks",
+      "cisco",
+      "osv"
+    ],
+    "AVAILABLE_ENGINES": [
+      "mergesafe",
+      "semgrep",
+      "gitleaks",
+      "cisco",
+      "osv",
+      "trivy"
+    ]
+  },
+  "actionDefaults": {
+    "engines": "",
+    "mode": "standard",
+    "out-dir": "mergesafe",
+    "fail-on": "high",
+    "verify-downloads": "strict"
+  },
+  "docsClaimHits": [
+    {
+      "path": "docs/workflows/mergesafe.yml",
+      "line": 25,
+      "text": "mode: fast",
+      "matched": [
+        "fast"
+      ]
+    },
+    {
+      "path": "packages/action/action.yml",
+      "line": 2,
+      "text": "description: 'Run MergeSafe scanner with default engines (mergesafe, semgrep, gitleaks, cisco, osv) or a custom engines list'",
+      "matched": [
+        "default engines"
+      ]
+    },
+    {
+      "path": "packages/action/action.yml",
+      "line": 9,
+      "text": "description: 'Scan mode (standard or fast)'",
+      "matched": [
+        "fast",
+        "standard"
+      ]
+    },
+    {
+      "path": "packages/action/action.yml",
+      "line": 11,
+      "text": "default: 'standard'",
+      "matched": [
+        "standard"
+      ]
+    },
+    {
+      "path": "packages/action/action.yml",
+      "line": 86,
+      "text": "--fail-on \"${{ inputs.fail_on }}\" \\",
+      "matched": [
+        "fail-on"
+      ]
+    },
+    {
+      "path": "packages/action/action.yml",
+      "line": 89,
+      "text": "--verify-downloads \"${{ inputs.verify_downloads }}\" \\",
+      "matched": [
+        "verify-downloads"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 3,
+      "text": "Offline-first deterministic scanner for MCP server codebases (local scan execution by default).",
+      "matched": [
+        "offline",
+        "offline-first"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 29,
+      "text": "mergesafe scan fixtures/node-unsafe-server --out-dir mergesafe-test --format json,sarif,md,html --fail-on none",
+      "matched": [
+        "fail-on"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 38,
+      "text": "Default engines are `mergesafe,semgrep,gitleaks,cisco,osv`. Optional supported engines (for example `trivy`) are **not** included unless you pass them via `--engines`. Missing engine binaries are auto-installed by default into `${HOME}/.mergesafe/tools` (override with `MERGESAFE_TOOLS_DIR`). Auto-install may download tools unless disabled with `--no-auto-install` or `--auto-install false`.",
+      "matched": [
+        "auto-install",
+        "default engines"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 52,
+      "text": "- `--mode standard|fast` default `standard`",
+      "matched": [
+        "fast",
+        "standard"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 55,
+      "text": "- `--fail-on critical|high|none` default `high`",
+      "matched": [
+        "fail-on"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 58,
+      "text": "- `--auto-install <true|false>` default `true`",
+      "matched": [
+        "auto-install"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 59,
+      "text": "- `--no-auto-install` disable tool bootstrap",
+      "matched": [
+        "auto-install"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 61,
+      "text": "- `--verify-downloads <off|warn|strict>` default `warn` in CLI (`strict` in GitHub Action)",
+      "matched": [
+        "verify-downloads"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 62,
+      "text": "- `--fail-on-scan-status <none|partial|failed|any>` default `none` (separate scan completeness enforcement)",
+      "matched": [
+        "fail-on"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 70,
+      "text": "- `gateStatus`: `PASS | FAIL` (did findings violate `--fail-on` policy?)",
+      "matched": [
+        "fail-on"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 78,
+      "text": "Backward-compatible default behavior is unchanged because `--fail-on-scan-status` defaults to `none`.",
+      "matched": [
+        "fail-on"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 86,
+      "text": "| Scan-status enforcement triggered by `--fail-on-scan-status` | `3` |",
+      "matched": [
+        "fail-on"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 92,
+      "text": "- `--fail-on high`, findings include high severity, and scan is PARTIAL → exit `2`.",
+      "matched": [
+        "fail-on"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 93,
+      "text": "- `--fail-on none --fail-on-scan-status partial`, scan is PARTIAL → exit `3`.",
+      "matched": [
+        "fail-on"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 94,
+      "text": "- `--fail-on none --fail-on-scan-status failed`, scan is PARTIAL → exit `0`.",
+      "matched": [
+        "fail-on"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 99,
+      "text": "pnpm -C packages/cli dev -- scan fixtures/node-unsafe-server --out-dir mergesafe-test --fail-on none",
+      "matched": [
+        "fail-on"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 114,
+      "text": "- On each run, cached binaries are verified against the manifest checksum before execution (unless `--verify-downloads off`).",
+      "matched": [
+        "verify-downloads"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 125,
+      "text": "- If `--no-auto-install` is set, missing engines are marked as `skipped` with install hints in `report.json`.",
+      "matched": [
+        "auto-install"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 128,
+      "text": "## Tool cache + offline-first defaults",
+      "matched": [
+        "offline",
+        "offline-first"
+      ]
+    },
+    {
+      "path": "README.md",
+      "line": 132,
+      "text": "- MergeSafe is offline-first: code is scanned locally and not uploaded by default, but tool bootstrap may download engine binaries unless auto-install is disabled.",
+      "matched": [
+        "auto-install",
+        "offline",
+        "offline-first"
+      ]
+    }
+  ],
+  "potentialMismatches": [
+    {
+      "type": "offline-claim-vs-auto-install-default",
+      "note": "Offline/air-gapped claims found while CLI default for --auto-install is true (may download missing tools)."
+    },
+    {
+      "type": "fast-default-claim",
+      "note": "A claim suggests fast is default, but CLI help reports mode default as standard."
+    }
+  ]
+}
