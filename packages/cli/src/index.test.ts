@@ -51,10 +51,37 @@ const UPDATE_GOLDENS =
   process.env.UPDATE_GOLDENS === '1' ||
   process.env.UPDATE_GOLDENS === 'true';
 
-// Windows can be slow for npm pack/install (Defender + IO), so allow more time.
-const SPAWN_TIMEOUT_MS = process.platform === 'win32' ? 120_000 : 60_000;
-const CLI_BUILD_SMOKE_TIMEOUT_MS = process.platform === 'win32' ? 60_000 : 20_000;
-const PACK_INSTALL_TEST_TIMEOUT_MS = process.platform === 'win32' ? 120_000 : 60_000;
+// ✅ CI can be slower (especially pnpm build + Node startup). Detect CI and relax timeouts.
+const IS_CI = Boolean(process.env.CI || process.env.GITHUB_ACTIONS);
+
+// Windows can be slow for npm pack/install (Defender + IO), and CI runners can be slower overall.
+const SPAWN_TIMEOUT_MS =
+  process.platform === 'win32'
+    ? IS_CI
+      ? 180_000
+      : 120_000
+    : IS_CI
+      ? 180_000
+      : 60_000;
+
+// ✅ This is the one that failed in GitHub Actions (linux): it was 20_000ms, but CI took ~25s.
+const CLI_BUILD_SMOKE_TIMEOUT_MS =
+  process.platform === 'win32'
+    ? IS_CI
+      ? 120_000
+      : 60_000
+    : IS_CI
+      ? 90_000
+      : 20_000;
+
+const PACK_INSTALL_TEST_TIMEOUT_MS =
+  process.platform === 'win32'
+    ? IS_CI
+      ? 180_000
+      : 120_000
+    : IS_CI
+      ? 120_000
+      : 60_000;
 
 function normalizeText(input: string): string {
   return String(input ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trimEnd();
@@ -270,7 +297,16 @@ describe('published CLI smoke', () => {
 
       const outDir = mkTempOutDir('mergesafe-smoke-dist');
       try {
-        const scan = runNodeScript(distEntry, ['scan', fixtureAbs, '--out-dir', outDir, '--format', 'json', '--fail-on', 'none']);
+        const scan = runNodeScript(distEntry, [
+          'scan',
+          fixtureAbs,
+          '--out-dir',
+          outDir,
+          '--format',
+          'json',
+          '--fail-on',
+          'none',
+        ]);
         if (scan.error) throw scan.error;
         expect(scan.status).toBe(0);
 
@@ -313,11 +349,7 @@ describe('published CLI smoke', () => {
         expect(init.status).toBe(0);
 
         // Speed + stability flags; avoids audit/fund network work, prefers local cache.
-        const install = runPackageManager(
-          'npm',
-          ['install', '--no-audit', '--no-fund', '--prefer-offline', tarballPath],
-          tempProject
-        );
+        const install = runPackageManager('npm', ['install', '--no-audit', '--no-fund', '--prefer-offline', tarballPath], tempProject);
         if (install.error) throw install.error;
         expect(install.status).toBe(0);
 
