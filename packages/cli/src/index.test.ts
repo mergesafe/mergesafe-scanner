@@ -51,6 +51,11 @@ const UPDATE_GOLDENS =
   process.env.UPDATE_GOLDENS === '1' ||
   process.env.UPDATE_GOLDENS === 'true';
 
+// Windows can be slow for npm pack/install (Defender + IO), so allow more time.
+const SPAWN_TIMEOUT_MS = process.platform === 'win32' ? 120_000 : 60_000;
+const CLI_BUILD_SMOKE_TIMEOUT_MS = process.platform === 'win32' ? 60_000 : 20_000;
+const PACK_INSTALL_TEST_TIMEOUT_MS = process.platform === 'win32' ? 120_000 : 60_000;
+
 function normalizeText(input: string): string {
   return String(input ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trimEnd();
 }
@@ -114,14 +119,14 @@ function containsAbsoluteMachinePathInString(s: string): boolean {
   const t = String(s ?? '');
 
   // Windows drive paths:
-  if (/[A-Za-zz]:\\/.test(t)) return true;
-  if (/[A-Za-zz]:\/(?!\/)/.test(t)) return true;
+  if (/[A-Za-z]:\\/.test(t)) return true;
+  if (/[A-Za-z]:\/(?!\/)/.test(t)) return true;
 
   // UNC paths: \\server\share\...
   if (/\\\\[A-Za-z0-9_.-]+\\/.test(t)) return true;
 
   // file:// URIs containing machine paths
-  if (/file:\/\/\/[A-Za-zz]:\/(?!\/)/i.test(t)) return true;
+  if (/file:\/\/\/[A-Za-z]:\/(?!\/)/i.test(t)) return true;
   if (/file:\/\/\/(Users|home|var|tmp|private|Volumes|opt)\//i.test(t)) return true;
 
   // Unix-ish absolute paths that strongly indicate machine-specific leakage
@@ -202,7 +207,7 @@ const baseSpawnOptions = {
   cwd: repoRoot,
   encoding: 'utf8' as const,
   windowsHide: true,
-  timeout: 60_000,
+  timeout: SPAWN_TIMEOUT_MS,
   env: { ...process.env },
 };
 
@@ -238,94 +243,118 @@ beforeAll(() => {
   expect(fs.existsSync(fixtureAbs)).toBe(true);
 });
 
-
 describe('published CLI smoke', () => {
-  test('build output exists and bundled CLI runs in repo', () => {
-    const build = runPackageManager('pnpm', ['-C', 'packages/cli', 'build']);
-    if (build.error) throw build.error;
-    expect(build.status).toBe(0);
+  test(
+    'build output exists and bundled CLI runs in repo',
+    () => {
+      const build = runPackageManager('pnpm', ['-C', 'packages/cli', 'build']);
+      if (build.error) throw build.error;
+      expect(build.status).toBe(0);
 
-    const distEntry = path.resolve(repoRoot, 'packages/cli/dist/index.js');
-    expect(fs.existsSync(distEntry)).toBe(true);
-    const distSource = fs.readFileSync(distEntry, 'utf8');
-    for (const workspaceImport of ['@mergesafe/core', '@mergesafe/engines', '@mergesafe/report', '@mergesafe/rules', '@mergesafe/sarif']) {
-      expect(distSource.includes(workspaceImport)).toBe(false);
-    }
-
-    const help = runNodeScript(distEntry, ['--help']);
-    if (help.error) throw help.error;
-    expect(help.status).toBe(0);
-
-    const outDir = mkTempOutDir('mergesafe-smoke-dist');
-    try {
-      const scan = runNodeScript(distEntry, ['scan', fixtureAbs, '--out-dir', outDir, '--format', 'json', '--fail-on', 'none']);
-      if (scan.error) throw scan.error;
-      expect(scan.status).toBe(0);
-
-      const jsonPath = [path.join(outDir, 'report.json'), path.join(outDir, 'results.json')].find((candidate) =>
-        fs.existsSync(candidate)
-      );
-      expect(jsonPath).toBeTruthy();
-      const report = JSON.parse(fs.readFileSync(jsonPath as string, 'utf8')) as { meta?: { engines?: Array<{ engineId?: string }> } };
-      const engineIds = new Set((report.meta?.engines ?? []).map((entry) => entry.engineId));
-      for (const expected of ['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv']) {
-        expect(engineIds.has(expected)).toBe(true);
+      const distEntry = path.resolve(repoRoot, 'packages/cli/dist/index.js');
+      expect(fs.existsSync(distEntry)).toBe(true);
+      const distSource = fs.readFileSync(distEntry, 'utf8');
+      for (const workspaceImport of [
+        '@mergesafe/core',
+        '@mergesafe/engines',
+        '@mergesafe/report',
+        '@mergesafe/rules',
+        '@mergesafe/sarif',
+      ]) {
+        expect(distSource.includes(workspaceImport)).toBe(false);
       }
-    } finally {
-      rmTempOutDir(outDir);
-    }
-  }, 20_000);
 
-  test('npm pack install smoke test executes installed bin via node', () => {
-    const cliDir = path.resolve(repoRoot, 'packages/cli');
-
-    const pack = runPackageManager('npm', ['pack'], cliDir);
-    if (pack.error) throw pack.error;
-    expect(pack.status).toBe(0);
-
-    const tarballName = String(pack.stdout).trim().split(/\r?\n/).filter(Boolean).at(-1);
-    expect(tarballName).toBeTruthy();
-    const tarballPath = path.resolve(cliDir, tarballName as string);
-
-    const tempProject = mkTempOutDir('mergesafe-pack-smoke');
-    const outDir = path.join(tempProject, 'out');
-    try {
-      const init = runPackageManager('npm', ['init', '-y'], tempProject);
-      if (init.error) throw init.error;
-      expect(init.status).toBe(0);
-
-      const install = runPackageManager('npm', ['install', tarballPath], tempProject);
-      if (install.error) throw install.error;
-      expect(install.status).toBe(0);
-
-      const installedPkgPath = path.join(tempProject, 'node_modules', 'mergesafe', 'package.json');
-      const installedPkg = JSON.parse(fs.readFileSync(installedPkgPath, 'utf8')) as { bin?: string | Record<string, string> };
-      const binRel =
-        typeof installedPkg.bin === 'string'
-          ? installedPkg.bin
-          : installedPkg.bin && typeof installedPkg.bin === 'object'
-            ? installedPkg.bin.mergesafe
-            : undefined;
-      expect(binRel).toBeTruthy();
-      const installedBin = path.resolve(path.dirname(installedPkgPath), binRel as string);
-
-      const help = runNodeScript(installedBin, ['--help'], tempProject);
+      const help = runNodeScript(distEntry, ['--help']);
       if (help.error) throw help.error;
       expect(help.status).toBe(0);
 
-      const scan = runNodeScript(installedBin, ['scan', fixtureAbs, '--out-dir', outDir, '--format', 'json', '--fail-on', 'none'], tempProject);
-      if (scan.error) throw scan.error;
-      expect(scan.status).toBe(0);
+      const outDir = mkTempOutDir('mergesafe-smoke-dist');
+      try {
+        const scan = runNodeScript(distEntry, ['scan', fixtureAbs, '--out-dir', outDir, '--format', 'json', '--fail-on', 'none']);
+        if (scan.error) throw scan.error;
+        expect(scan.status).toBe(0);
 
-      const jsonPath = [path.join(outDir, 'report.json'), path.join(outDir, 'results.json')].find((candidate) =>
-        fs.existsSync(candidate)
-      );
-      expect(jsonPath).toBeTruthy();
-    } finally {
-      if (tarballPath && fs.existsSync(tarballPath)) fs.rmSync(tarballPath, { force: true });
-      rmTempOutDir(tempProject);
-    }
-  }, 20_000);
+        const jsonPath = [path.join(outDir, 'report.json'), path.join(outDir, 'results.json')].find((candidate) =>
+          fs.existsSync(candidate)
+        );
+        expect(jsonPath).toBeTruthy();
+        const report = JSON.parse(fs.readFileSync(jsonPath as string, 'utf8')) as {
+          meta?: { engines?: Array<{ engineId?: string }> };
+        };
+        const engineIds = new Set((report.meta?.engines ?? []).map((entry) => entry.engineId));
+        for (const expected of ['mergesafe', 'semgrep', 'gitleaks', 'cisco', 'osv']) {
+          expect(engineIds.has(expected)).toBe(true);
+        }
+      } finally {
+        rmTempOutDir(outDir);
+      }
+    },
+    CLI_BUILD_SMOKE_TIMEOUT_MS
+  );
+
+  test(
+    'npm pack install smoke test executes installed bin via node',
+    () => {
+      const cliDir = path.resolve(repoRoot, 'packages/cli');
+
+      const pack = runPackageManager('npm', ['pack'], cliDir);
+      if (pack.error) throw pack.error;
+      expect(pack.status).toBe(0);
+
+      const tarballName = String(pack.stdout).trim().split(/\r?\n/).filter(Boolean).at(-1);
+      expect(tarballName).toBeTruthy();
+      const tarballPath = path.resolve(cliDir, tarballName as string);
+
+      const tempProject = mkTempOutDir('mergesafe-pack-smoke');
+      const outDir = path.join(tempProject, 'out');
+      try {
+        const init = runPackageManager('npm', ['init', '-y'], tempProject);
+        if (init.error) throw init.error;
+        expect(init.status).toBe(0);
+
+        // Speed + stability flags; avoids audit/fund network work, prefers local cache.
+        const install = runPackageManager(
+          'npm',
+          ['install', '--no-audit', '--no-fund', '--prefer-offline', tarballPath],
+          tempProject
+        );
+        if (install.error) throw install.error;
+        expect(install.status).toBe(0);
+
+        const installedPkgPath = path.join(tempProject, 'node_modules', 'mergesafe', 'package.json');
+        const installedPkg = JSON.parse(fs.readFileSync(installedPkgPath, 'utf8')) as { bin?: string | Record<string, string> };
+        const binRel =
+          typeof installedPkg.bin === 'string'
+            ? installedPkg.bin
+            : installedPkg.bin && typeof installedPkg.bin === 'object'
+              ? (installedPkg.bin as any).mergesafe
+              : undefined;
+        expect(binRel).toBeTruthy();
+        const installedBin = path.resolve(path.dirname(installedPkgPath), binRel as string);
+
+        const help = runNodeScript(installedBin, ['--help'], tempProject);
+        if (help.error) throw help.error;
+        expect(help.status).toBe(0);
+
+        const scan = runNodeScript(
+          installedBin,
+          ['scan', fixtureAbs, '--out-dir', outDir, '--format', 'json', '--fail-on', 'none'],
+          tempProject
+        );
+        if (scan.error) throw scan.error;
+        expect(scan.status).toBe(0);
+
+        const jsonPath = [path.join(outDir, 'report.json'), path.join(outDir, 'results.json')].find((candidate) =>
+          fs.existsSync(candidate)
+        );
+        expect(jsonPath).toBeTruthy();
+      } finally {
+        if (tarballPath && fs.existsSync(tarballPath)) fs.rmSync(tarballPath, { force: true });
+        rmTempOutDir(tempProject);
+      }
+    },
+    PACK_INSTALL_TEST_TIMEOUT_MS
+  );
 });
 
 describe('deterministic outputs goldens', () => {
@@ -505,7 +534,6 @@ describe('option parsing utilities', () => {
     expect(config.failOnScanStatus).toBe('none');
   });
 
-
   test('resolveConfig keeps fast mode as explicit opt-in', () => {
     const config = resolveConfig({ mode: 'fast' });
     expect(config.mode).toBe('fast');
@@ -515,6 +543,7 @@ describe('option parsing utilities', () => {
     const config = resolveConfig({ engines: 'all' });
     expect(config.engines).toEqual([...AVAILABLE_ENGINES]);
   });
+
   test('resolveConfig parses verify-downloads flag', () => {
     const config = resolveConfig({ 'verify-downloads': 'strict' });
     expect(config.verifyDownloads).toBe('strict');
@@ -549,7 +578,6 @@ describe('option parsing utilities', () => {
     expect(absOutDir.includes('C:\\C:\\')).toBe(false);
   });
 });
-
 
 describe('mode and engines UX defaults', () => {
   test('runScan reports mode=standard by default when mode is omitted', async () => {
@@ -651,7 +679,6 @@ describe('help output', () => {
     expect(out).toContain('Usage: mergesafe scan <path> [options]');
   });
 });
-
 
 describe('exit code matrix', () => {
   test('gate FAIL remains exit code 2 even if scan-status enforcement also enabled', () => {

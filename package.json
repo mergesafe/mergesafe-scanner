@@ -4,9 +4,13 @@
   "version": "0.1.0",
   "packageManager": "pnpm@10.0.0",
   "scripts": {
-    "build": "pnpm -r build",
-    "test": "pnpm -r test",
-    "lint": "pnpm -r lint"
+    "build:pkgs": "pnpm -r --filter \"./packages/**\" --if-present build",
+    "test:pkgs": "pnpm -r --filter \"./packages/**\" test",
+    "lint:pkgs": "pnpm -r --filter \"./packages/**\" lint",
+
+    "build": "pnpm run build:pkgs",
+    "test": "pnpm run build:pkgs && pnpm run test:pkgs",
+    "lint": "pnpm run lint:pkgs"
   },
   "devDependencies": {
     "@types/node": "^20.19.33",
