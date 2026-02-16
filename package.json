@@ -7,6 +7,8 @@
     "build:pkgs": "pnpm -r --filter \"./packages/**\" --if-present build",
     "test:pkgs": "pnpm -r --filter \"./packages/**\" test",
     "lint:pkgs": "pnpm -r --filter \"./packages/**\" lint",
+    "parity": "node scripts/parity-audit.mjs",
+    "parity:update": "node scripts/parity-audit.mjs --write",
 
     "build": "pnpm run build:pkgs",
     "test": "pnpm run build:pkgs && pnpm run test:pkgs",
