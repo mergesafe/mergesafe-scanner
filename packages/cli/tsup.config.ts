@@ -7,6 +7,8 @@ export default defineConfig({
   target: "es2022",
   clean: true,
   sourcemap: true,
+  noExternal: [/^@mergesafe\//],
+  skipNodeModulesBundle: true,
   banner: {
     js: "#!/usr/bin/env node",
   },
