@@ -299,17 +299,23 @@ function normalizePathForKey(p: string): string {
   return toPosixPath(String(p || ''));
 }
 
+export function isMergeSafeDebugEnabled(): boolean {
+  if (process.env.MERGESAFE_DEBUG === '1') return true;
+
+  const debug = String(process.env.DEBUG ?? '').toLowerCase();
+  return debug.includes('mergesafe');
+}
+
 /* -------------------------------------------------------------------------- */
 /* Cross-platform deterministic path + fingerprint debug (Windows/Linux parity) */
 /* -------------------------------------------------------------------------- */
 
 /**
- * Enable debug logs (safe in CI):
- * - MERGESAFE_DEBUG_FINGERPRINT=1 (or MERGESAFE_DEBUG=1)
- * - MERGESAFE_DEBUG_LIMIT=200
+ * Enable debug logs explicitly:
+ * - MERGESAFE_DEBUG=1
+ * - DEBUG includes "mergesafe"
  */
-const __MS_DEBUG_FP =
-  process.env.MERGESAFE_DEBUG_FINGERPRINT === '1' || process.env.MERGESAFE_DEBUG === '1';
+const __MS_DEBUG_FP = isMergeSafeDebugEnabled();
 const __MS_DEBUG_LIMIT = Number(process.env.MERGESAFE_DEBUG_LIMIT ?? 200);
 let __msDebugCount = 0;
 

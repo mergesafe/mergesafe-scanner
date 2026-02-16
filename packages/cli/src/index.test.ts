@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   runScan,
   writeOutputs,
@@ -26,6 +26,10 @@ const fixtureRel = 'fixtures/node-unsafe-server';
 const goldensDir = path.resolve(repoRoot, 'packages/cli/test/goldens/node-unsafe-server');
 const goldenReportPath = path.join(goldensDir, 'report.json');
 const goldenSarifPath = path.join(goldensDir, 'results.sarif');
+
+
+const previousMergeSafeDebug = process.env.MERGESAFE_DEBUG;
+process.env.MERGESAFE_DEBUG = '0';
 
 type CliResult = {
   status: number | null;
@@ -235,7 +239,7 @@ const baseSpawnOptions = {
   encoding: 'utf8' as const,
   windowsHide: true,
   timeout: SPAWN_TIMEOUT_MS,
-  env: { ...process.env },
+  env: { ...process.env, MERGESAFE_DEBUG: '0' },
 };
 
 function runPackageManager(command: 'pnpm' | 'npm', args: string[], cwd = repoRoot) {
@@ -267,7 +271,13 @@ const runCli = (args: string[]): CliResult => {
 };
 
 beforeAll(() => {
+  process.env.MERGESAFE_DEBUG = '0';
   expect(fs.existsSync(fixtureAbs)).toBe(true);
+});
+
+afterAll(() => {
+  if (previousMergeSafeDebug === undefined) delete process.env.MERGESAFE_DEBUG;
+  else process.env.MERGESAFE_DEBUG = previousMergeSafeDebug;
 });
 
 describe('published CLI smoke', () => {
