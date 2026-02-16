@@ -1,6 +1,6 @@
 # MergeSafe Scanner (V0 Core)
 
-Offline-first deterministic scanner for MCP server codebases (local scan execution by default).
+Deterministic scanner for MCP server codebases. Scans run locally; optional tool bootstrap and update flows may download binaries or vulnerability databases when enabled.
 
 ## Quickstart
 
@@ -50,16 +50,43 @@ Default engines are `mergesafe,semgrep,gitleaks,cisco,osv`. Optional supported e
 - `--out-dir <dir>` default `mergesafe`
 - `--format <csv>` default `json,html,sarif,md`
 - `--mode standard|fast` default `standard`
-- `--timeout <seconds>`
-- `--concurrency <n>`
+- `--timeout <seconds>` default `30`
+- `--concurrency <n>` default `4`
 - `--fail-on critical|high|none` default `high`
+- `--fail-on-scan-status <none|partial|failed|any>` default `none` (separate scan completeness enforcement)
 - `--config <path>` (optional YAML)
 - `--engines <csv|space-separated|all>` default `mergesafe,semgrep,gitleaks,cisco,osv`; use `all` to include all available engines (including optional engines like `trivy`)
 - `--auto-install <true|false>` default `true`
 - `--no-auto-install` disable tool bootstrap
 - `--redact`
 - `--verify-downloads <off|warn|strict>` default `warn` in CLI (`strict` in GitHub Action)
-- `--fail-on-scan-status <none|partial|failed|any>` default `none` (separate scan completeness enforcement)
+- `--path-mode <relative|absolute>` default `relative`
+
+### YAML config (`--config`) minimal example
+
+`scan.yml`:
+
+```yaml
+mode: standard
+failOn: high
+failOnScanStatus: none
+format:
+  - json
+  - html
+  - sarif
+  - md
+verifyDownloads: warn
+pathMode: relative
+timeout: 30
+concurrency: 4
+autoInstall: true
+```
+
+Run with:
+
+```bash
+mergesafe scan . --config scan.yml
+```
 
 
 ## Scan completeness vs policy gate
@@ -125,9 +152,9 @@ Expected output files:
 - If `--no-auto-install` is set, missing engines are marked as `skipped` with install hints in `report.json`.
 - Engine failures are non-fatal: scan output files are still written.
 
-## Tool cache + offline-first defaults
+## Tool cache + local scan behavior
 
 - Default cache dir: `~/.mergesafe/tools`
 - Override cache dir: `MERGESAFE_TOOLS_DIR`
-- MergeSafe is offline-first: code is scanned locally and not uploaded by default, but tool bootstrap may download engine binaries unless auto-install is disabled.
+- Code is scanned locally and not uploaded by default, but tool bootstrap may download engine binaries unless auto-install is disabled.
 - Remote analyzers (including LLM-backed analysis) are opt-in and OFF by default.

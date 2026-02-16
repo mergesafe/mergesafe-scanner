@@ -32,7 +32,7 @@ jobs:
         with:
           # Scan only real source (adjust if you add more packages later)
           path: packages
-          mode: fast
+          mode: standard
           fail_on: none
           # Put outputs in a dir that isn't part of the scanned tree
           out_dir: mergesafe-ci

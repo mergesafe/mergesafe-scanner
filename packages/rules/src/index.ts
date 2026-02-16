@@ -8,8 +8,8 @@ import { emitToolsManifestFindings, type ToolSurface } from "./tools_manifest.js
 /* ------------------------- debug helpers (env-gated) ------------------------- */
 
 const DEBUG_FINGERPRINT =
-  process.env.MERGESAFE_DEBUG_FINGERPRINT === "1" ||
-  String(process.env.MERGESAFE_DEBUG_FINGERPRINT || "").toLowerCase() === "true";
+  process.env.MERGESAFE_DEBUG === "1" ||
+  String(process.env.DEBUG || "").toLowerCase().includes("mergesafe");
 
 const DEBUG_LIMIT = (() => {
   const n = Number.parseInt(String(process.env.MERGESAFE_DEBUG_LIMIT ?? "200"), 10);
