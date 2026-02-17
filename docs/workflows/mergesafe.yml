@@ -5,12 +5,10 @@ on:
 permissions:
   contents: read
   security-events: write
-  # Needed only when COMMENT_PR is true
   pull-requests: write
 
 env:
   COMMENT_PR: 'false'
-  MERGESAFE_TOOLS_DIR: ${{ runner.temp }}/mergesafe-tools
 
 jobs:
   scan:
@@ -18,24 +16,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run MergeSafe
-        uses: mergesafe/mergesafe-scanner/packages/action@main
+      - uses: actions/setup-node@v4
         with:
-          path: .
-          mode: standard
-          fail_on: high
-          # engines: mergesafe,semgrep,gitleaks,cisco,osv
-          # fail_on: none
-          out_dir: mergesafe
-          # out_dir: security/mergesafe
-          upload_sarif: 'false'
-          comment_pr: 'false'
+          node-version: "20"
+
+      # IMPORTANT:
+      # Avoid scanning "." if your repo contains fixtures/goldens that include finding strings,
+      # because GitHub code scanning can treat those as new alerts.
+      # If you WANT full repo scan, set SCAN_PATH=".".
+      - name: Run MergeSafe (npm)
+        env:
+          SCAN_PATH: packages
+          OUT_DIR: mergesafe
+        run: |
+          npx -y mergesafe@0.1.0 scan "$SCAN_PATH" \
+            --mode standard \
+            --fail-on high \
+            --out-dir "$OUT_DIR" \
+            --format json,html,sarif,md
 
       - name: Check MergeSafe outputs
         id: outputs
         shell: bash
         run: |
-          OUT_DIR="${MERGESAFE_OUT_DIR:-${GITHUB_WORKSPACE}/mergesafe}"
+          OUT_DIR="${GITHUB_WORKSPACE}/mergesafe"
           echo "out_dir=$OUT_DIR" >> "$GITHUB_OUTPUT"
           [ -f "$OUT_DIR/results.sarif" ] && echo "has_sarif=true" >> "$GITHUB_OUTPUT" || echo "has_sarif=false" >> "$GITHUB_OUTPUT"
           [ -f "$OUT_DIR/summary.md" ] && echo "has_summary=true" >> "$GITHUB_OUTPUT" || echo "has_summary=false" >> "$GITHUB_OUTPUT"
