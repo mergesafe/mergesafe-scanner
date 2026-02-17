@@ -1,6 +1,27 @@
 {
   "name": "mergesafe",
   "version": "0.1.0",
+  "description": "Multi-engine MCP and repository security scanner (offline-first CLI).",
+  "keywords": [
+    "security",
+    "scanner",
+    "mcp",
+    "sarif",
+    "semgrep",
+    "gitleaks",
+    "supply-chain",
+    "static-analysis"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mergesafe/mergesafe-scanner.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/mergesafe/mergesafe-scanner/issues"
+  },
+  "homepage": "https://github.com/mergesafe/mergesafe-scanner#readme",
   "type": "module",
   "bin": {
     "mergesafe": "dist/index.js"
@@ -9,8 +30,12 @@
     "dev": "tsx src/index.ts",
     "build": "tsup --tsconfig tsconfig.build.json",
     "postbuild": "node scripts/postbuild.mjs",
+    "prepack": "npm run build",
     "test": "vitest run --passWithNoTests",
     "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
     "yaml": "^2.7.0",
